@@ -1,0 +1,13 @@
+.DS_Store
+
+# Local tool settings
+.claude/
+
+# Build outputs
+zenbox
+cli_test
+*.test
+*.out
+
+# Local scan exports
+scan.json.gz

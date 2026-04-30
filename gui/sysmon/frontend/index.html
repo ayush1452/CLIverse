@@ -1,0 +1,690 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CLIverse · System Monitor</title>
+  <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:       #1a1b26;
+      --bg-panel: #1e2030;
+      --bg-card:  #24283b;
+      --fg:       #c0caf5;
+      --subtle:   #565f89;
+      --accent:   #7aa2f7;
+      --green:    #9ece6a;
+      --yellow:   #e0af68;
+      --red:      #f7768e;
+      --purple:   #bb9af7;
+      --cyan:     #7dcfff;
+      --border:   #2d2d44;
+      --border2:  #1e1e2e;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--fg);
+      font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', 'JetBrains Mono', monospace;
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    /* ── Header ─────────────────────────────────────────────────── */
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 24px;
+      background: var(--bg-panel);
+      border-bottom: 1px solid var(--border);
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+
+    .brand { display: flex; align-items: center; gap: 10px; }
+    .brand h1 { font-size: 16px; font-weight: 600; letter-spacing: 0.3px; color: var(--fg); }
+    .brand h1 span { color: var(--subtle); margin: 0 4px; }
+    .brand .badge {
+      font-size: 10px; padding: 2px 8px;
+      background: rgba(122,162,247,0.15);
+      border: 1px solid rgba(122,162,247,0.3);
+      border-radius: 999px;
+      color: var(--accent);
+      letter-spacing: 0.8px;
+    }
+
+    .header-stats { display: flex; gap: 28px; align-items: center; }
+    .hstat { display: flex; flex-direction: column; align-items: flex-end; }
+    .hstat-label { font-size: 9px; text-transform: uppercase; letter-spacing: 1.2px; color: var(--subtle); }
+    .hstat-val { font-size: 15px; font-weight: 700; margin-top: 1px; }
+
+    #clock { color: var(--subtle); font-size: 13px; min-width: 70px; text-align: right; }
+
+    /* ── Layout ──────────────────────────────────────────────────── */
+    main { padding: 14px; display: flex; flex-direction: column; gap: 14px; }
+
+    .row { display: grid; gap: 14px; }
+    .row-3 { grid-template-columns: 260px 1fr 280px; }
+    .row-3c { grid-template-columns: 1fr 1fr 1fr; }
+
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+    }
+
+    .card-title {
+      padding: 10px 16px 0;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: var(--subtle);
+      font-weight: 500;
+    }
+
+    /* ECharts containers */
+    .echart { width: 100%; }
+    .h-gauge { height: 240px; }
+    .h-line  { height: 240px; }
+    .h-donut { height: 240px; }
+    .h-bars  { height: 220px; }
+    .h-io    { height: 210px; }
+
+    /* ── Process Table ────────────────────────────────────────────── */
+    .proc-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 16px;
+      border-bottom: 1px solid var(--border);
+    }
+    .proc-title h2 {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: var(--subtle);
+    }
+    .sort-btns { display: flex; gap: 6px; }
+    .sort-btn {
+      padding: 3px 10px;
+      background: transparent;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      color: var(--subtle);
+      cursor: pointer;
+      font-size: 11px;
+      font-family: inherit;
+      transition: all 0.15s;
+    }
+    .sort-btn.active { border-color: var(--accent); color: var(--accent); background: rgba(122,162,247,0.08); }
+    .sort-btn:hover:not(.active) { border-color: var(--fg); color: var(--fg); }
+
+    .table-wrap { overflow-x: auto; max-height: 320px; overflow-y: auto; }
+
+    table { width: 100%; border-collapse: collapse; }
+    thead { position: sticky; top: 0; background: var(--bg-card); z-index: 2; }
+    th {
+      text-align: left;
+      padding: 8px 14px;
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      color: var(--subtle);
+      border-bottom: 1px solid var(--border);
+      white-space: nowrap;
+      cursor: pointer;
+      user-select: none;
+    }
+    th:hover { color: var(--fg); }
+
+    td {
+      padding: 7px 14px;
+      font-size: 12px;
+      border-bottom: 1px solid var(--border2);
+      white-space: nowrap;
+    }
+    tbody tr { transition: background 0.1s; }
+    tbody tr:hover { background: rgba(122,162,247,0.06); }
+    tbody tr:last-child td { border-bottom: none; }
+
+    td.name-cell { max-width: 180px; overflow: hidden; text-overflow: ellipsis; }
+
+    .cpu-wrapper { display: flex; flex-direction: column; gap: 3px; min-width: 80px; }
+    .cpu-num { font-size: 12px; }
+    .cpu-bar-bg {
+      height: 3px;
+      background: var(--border);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+    .cpu-bar-fill {
+      height: 100%;
+      border-radius: 2px;
+      transition: width 0.6s ease;
+    }
+
+    .kill-btn {
+      padding: 2px 9px;
+      background: transparent;
+      border: 1px solid rgba(247,118,142,0.4);
+      border-radius: 4px;
+      color: var(--red);
+      cursor: pointer;
+      font-size: 10px;
+      font-family: inherit;
+      letter-spacing: 0.3px;
+      transition: all 0.15s;
+    }
+    .kill-btn:hover { background: rgba(247,118,142,0.12); border-color: var(--red); }
+
+    /* ── Toast ───────────────────────────────────────────────────── */
+    #toast {
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      padding: 10px 18px;
+      border-radius: 6px;
+      font-size: 13px;
+      opacity: 0;
+      transition: opacity 0.3s;
+      pointer-events: none;
+      z-index: 100;
+    }
+    #toast.show { opacity: 1; }
+    #toast.ok   { background: rgba(158,206,106,0.15); border: 1px solid var(--green); color: var(--green); }
+    #toast.err  { background: rgba(247,118,142,0.15); border: 1px solid var(--red);   color: var(--red);   }
+
+    /* ── Scrollbar ───────────────────────────────────────────────── */
+    ::-webkit-scrollbar { width: 5px; height: 5px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 999px; }
+  </style>
+</head>
+<body>
+
+<!-- ── Header ──────────────────────────────────────────────────────── -->
+<header>
+  <div class="brand">
+    <h1>CLIverse <span>·</span> System Monitor</h1>
+    <span class="badge">LIVE</span>
+  </div>
+  <div class="header-stats">
+    <div class="hstat">
+      <span class="hstat-label">CPU</span>
+      <span class="hstat-val" id="h-cpu" style="color:var(--green)">—</span>
+    </div>
+    <div class="hstat">
+      <span class="hstat-label">Memory</span>
+      <span class="hstat-val" id="h-mem" style="color:var(--accent)">—</span>
+    </div>
+    <div class="hstat">
+      <span class="hstat-label">Network ↓↑</span>
+      <span class="hstat-val" id="h-net" style="color:var(--cyan)">—</span>
+    </div>
+    <div id="clock">—</div>
+  </div>
+</header>
+
+<!-- ── Main ────────────────────────────────────────────────────────── -->
+<main>
+
+  <!-- Row 1: CPU Gauge · CPU History · Memory Donut -->
+  <div class="row row-3">
+    <div class="card">
+      <div class="card-title">CPU Usage</div>
+      <div class="echart h-gauge" id="cpu-gauge"></div>
+    </div>
+    <div class="card">
+      <div class="card-title">CPU History (60 s)</div>
+      <div class="echart h-line" id="cpu-history"></div>
+    </div>
+    <div class="card">
+      <div class="card-title">Memory</div>
+      <div class="echart h-donut" id="mem-chart"></div>
+    </div>
+  </div>
+
+  <!-- Row 2: CPU Cores · Network I/O · Disk I/O -->
+  <div class="row row-3c">
+    <div class="card">
+      <div class="card-title">CPU Cores</div>
+      <div class="echart h-bars" id="core-chart"></div>
+    </div>
+    <div class="card">
+      <div class="card-title">Network I/O</div>
+      <div class="echart h-io" id="net-chart"></div>
+    </div>
+    <div class="card">
+      <div class="card-title">Disk I/O</div>
+      <div class="echart h-io" id="disk-chart"></div>
+    </div>
+  </div>
+
+  <!-- Row 3: Process Table -->
+  <div class="card">
+    <div class="proc-title">
+      <h2>Processes</h2>
+      <div class="sort-btns">
+        <button class="sort-btn active" id="sort-cpu" onclick="setSort('cpu')">CPU</button>
+        <button class="sort-btn"        id="sort-mem" onclick="setSort('mem')">Memory</button>
+      </div>
+    </div>
+    <div class="table-wrap">
+      <table id="proc-table">
+        <thead>
+          <tr>
+            <th style="width:70px">PID</th>
+            <th>Name</th>
+            <th style="width:110px">CPU %</th>
+            <th style="width:100px">Memory</th>
+            <th style="width:60px"></th>
+          </tr>
+        </thead>
+        <tbody id="proc-tbody"></tbody>
+      </table>
+    </div>
+  </div>
+
+</main>
+
+<div id="toast"></div>
+
+<script>
+'use strict';
+
+/* ── Palette ──────────────────────────────────────────────────────── */
+const C = {
+  bg:     '#1a1b26',
+  panel:  '#1e2030',
+  card:   '#24283b',
+  fg:     '#c0caf5',
+  subtle: '#565f89',
+  accent: '#7aa2f7',
+  green:  '#9ece6a',
+  yellow: '#e0af68',
+  red:    '#f7768e',
+  purple: '#bb9af7',
+  cyan:   '#7dcfff',
+  border: '#2d2d44',
+  dark:   '#1e1e2e',
+};
+
+function levelColor(pct) {
+  if (pct >= 80) return C.red;
+  if (pct >= 50) return C.yellow;
+  return C.green;
+}
+
+function fmtBytes(b) {
+  if (b < 1024)         return b.toFixed(0) + ' B';
+  if (b < 1024 ** 2)    return (b / 1024).toFixed(1) + ' KB';
+  if (b < 1024 ** 3)    return (b / 1024 ** 2).toFixed(1) + ' MB';
+  return (b / 1024 ** 3).toFixed(2) + ' GB';
+}
+
+function esc(s) {
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+/* ── History Buffers ──────────────────────────────────────────────── */
+const N = 60;
+const mkBuf = () => new Array(N).fill(0);
+const cpuHist     = mkBuf();
+const netRecvHist = mkBuf();
+const netSentHist = mkBuf();
+const dskReadHist = mkBuf();
+const dskWritHist = mkBuf();
+const timeLbls    = new Array(N).fill('');
+
+function push(buf, v) { buf.push(v); buf.shift(); }
+
+/* ── Chart Instances ──────────────────────────────────────────────── */
+const gauge    = echarts.init(document.getElementById('cpu-gauge'));
+const cpuLine  = echarts.init(document.getElementById('cpu-history'));
+const memDonut = echarts.init(document.getElementById('mem-chart'));
+const coreBar  = echarts.init(document.getElementById('core-chart'));
+const netLine  = echarts.init(document.getElementById('net-chart'));
+const diskLine = echarts.init(document.getElementById('disk-chart'));
+
+const allCharts = [gauge, cpuLine, memDonut, coreBar, netLine, diskLine];
+
+/* ── ECharts Base Styles ──────────────────────────────────────────── */
+const gridBase = { top: 36, right: 14, bottom: 28, left: 60 };
+const xAxisCat = (data) => ({
+  type: 'category', data,
+  axisLine: { lineStyle: { color: C.border } },
+  axisLabel: { show: false },
+  splitLine: { show: false },
+});
+const yAxisVal = (fmt) => ({
+  type: 'value',
+  axisLine: { show: false },
+  splitLine: { lineStyle: { color: C.dark, type: 'dashed' } },
+  axisLabel: { color: C.subtle, fontSize: 10, formatter: fmt },
+});
+const areaLine = (color) => ({
+  type: 'linear', x: 0, y: 0, x2: 0, y2: 1,
+  colorStops: [
+    { offset: 0, color: color + '55' },
+    { offset: 1, color: color + '08' },
+  ],
+});
+
+/* ── CPU Gauge ────────────────────────────────────────────────────── */
+gauge.setOption({
+  backgroundColor: 'transparent',
+  series: [{
+    type: 'gauge',
+    startAngle: 215, endAngle: -35,
+    min: 0, max: 100,
+    radius: '90%', center: ['50%', '58%'],
+    progress: { show: true, width: 14, itemStyle: { color: C.green } },
+    pointer: { show: true, length: '52%', width: 4, itemStyle: { color: C.fg } },
+    axisLine: { lineStyle: { width: 14, color: [[1, C.border]] } },
+    axisTick: { show: false },
+    splitLine: { show: false },
+    axisLabel: { show: false },
+    title: {
+      show: true, offsetCenter: [0, '80%'],
+      color: C.subtle, fontSize: 11, fontFamily: 'monospace',
+    },
+    detail: {
+      valueAnimation: true,
+      formatter: '{value}%',
+      color: C.fg, fontSize: 34, fontWeight: 700,
+      fontFamily: 'monospace', offsetCenter: [0, '30%'],
+    },
+    data: [{ value: 0, name: 'CPU' }],
+  }],
+});
+
+/* ── CPU History Line ─────────────────────────────────────────────── */
+cpuLine.setOption({
+  backgroundColor: 'transparent',
+  grid: gridBase,
+  xAxis: xAxisCat([...timeLbls]),
+  yAxis: { ...yAxisVal(v => v + '%'), min: 0, max: 100 },
+  series: [{
+    type: 'line', data: [...cpuHist],
+    smooth: true, symbol: 'none',
+    lineStyle: { color: C.accent, width: 2 },
+    areaStyle: { color: areaLine(C.accent) },
+  }],
+});
+
+/* ── Memory Donut ─────────────────────────────────────────────────── */
+memDonut.setOption({
+  backgroundColor: 'transparent',
+  legend: {
+    orient: 'vertical', right: '4%', top: '28%',
+    textStyle: { color: C.fg, fontSize: 11, fontFamily: 'monospace' },
+  },
+  series: [{
+    type: 'pie',
+    radius: ['42%', '65%'], center: ['38%', '55%'],
+    avoidLabelOverlap: true,
+    itemStyle: { borderColor: C.card, borderWidth: 3, borderRadius: 5 },
+    label: { show: true, formatter: '{d}%', color: C.fg, fontSize: 11, fontFamily: 'monospace' },
+    labelLine: { lineStyle: { color: C.border } },
+    data: [
+      { value: 1, name: 'Used',  itemStyle: { color: C.accent } },
+      { value: 0, name: 'Free',  itemStyle: { color: C.border } },
+      { value: 0, name: 'Cache', itemStyle: { color: C.purple } },
+    ],
+  }],
+});
+
+/* ── CPU Cores Horizontal Bar ─────────────────────────────────────── */
+coreBar.setOption({
+  backgroundColor: 'transparent',
+  grid: { top: 8, right: 60, bottom: 8, left: 54 },
+  xAxis: {
+    type: 'value', min: 0, max: 100,
+    axisLabel: { show: false }, axisLine: { show: false }, splitLine: { show: false },
+  },
+  yAxis: {
+    type: 'category', data: [],
+    axisLabel: { color: C.subtle, fontSize: 10, fontFamily: 'monospace' },
+    axisLine: { lineStyle: { color: C.border } },
+    inverse: false,
+  },
+  series: [{
+    type: 'bar', data: [],
+    barMaxWidth: 14,
+    showBackground: true,
+    backgroundStyle: { color: C.border, borderRadius: [0, 4, 4, 0] },
+    itemStyle: { color: C.green, borderRadius: [0, 4, 4, 0] },
+    label: {
+      show: true, position: 'right',
+      formatter: '{c}%', color: C.subtle, fontSize: 10, fontFamily: 'monospace',
+    },
+  }],
+});
+
+/* ── Network I/O ──────────────────────────────────────────────────── */
+netLine.setOption({
+  backgroundColor: 'transparent',
+  legend: {
+    data: ['↓ Recv', '↑ Sent'], right: 10, top: 4,
+    textStyle: { color: C.fg, fontSize: 10, fontFamily: 'monospace' },
+    itemWidth: 12, itemHeight: 3,
+  },
+  grid: { top: 32, right: 14, bottom: 24, left: 66 },
+  xAxis: xAxisCat([...timeLbls]),
+  yAxis: yAxisVal(v => fmtBytes(v) + '/s'),
+  series: [
+    {
+      name: '↓ Recv', type: 'line', data: [...netRecvHist],
+      smooth: true, symbol: 'none',
+      lineStyle: { color: C.cyan, width: 1.5 },
+      areaStyle: { color: areaLine(C.cyan) },
+    },
+    {
+      name: '↑ Sent', type: 'line', data: [...netSentHist],
+      smooth: true, symbol: 'none',
+      lineStyle: { color: C.purple, width: 1.5 },
+      areaStyle: { color: areaLine(C.purple) },
+    },
+  ],
+});
+
+/* ── Disk I/O ─────────────────────────────────────────────────────── */
+diskLine.setOption({
+  backgroundColor: 'transparent',
+  legend: {
+    data: ['Read', 'Write'], right: 10, top: 4,
+    textStyle: { color: C.fg, fontSize: 10, fontFamily: 'monospace' },
+    itemWidth: 12, itemHeight: 3,
+  },
+  grid: { top: 32, right: 14, bottom: 24, left: 66 },
+  xAxis: xAxisCat([...timeLbls]),
+  yAxis: yAxisVal(v => fmtBytes(v) + '/s'),
+  series: [
+    {
+      name: 'Read', type: 'line', data: [...dskReadHist],
+      smooth: true, symbol: 'none',
+      lineStyle: { color: C.green, width: 1.5 },
+      areaStyle: { color: areaLine(C.green) },
+    },
+    {
+      name: 'Write', type: 'line', data: [...dskWritHist],
+      smooth: true, symbol: 'none',
+      lineStyle: { color: C.yellow, width: 1.5 },
+      areaStyle: { color: areaLine(C.yellow) },
+    },
+  ],
+});
+
+/* ── SSE Stream ───────────────────────────────────────────────────── */
+let procSort = 'cpu';
+let lastProcs = [];
+
+const evtSrc = new EventSource('/events');
+evtSrc.onmessage = (e) => {
+  try { updateAll(JSON.parse(e.data)); }
+  catch (_) {}
+};
+evtSrc.onerror = () => {
+  document.getElementById('clock').textContent = 'reconnecting…';
+};
+
+/* ── Main Update ──────────────────────────────────────────────────── */
+function updateAll(s) {
+  const now = new Date().toLocaleTimeString();
+  push(timeLbls, now);
+
+  // --- CPU ---
+  const cpuPct = +(s.CPUTotal || 0).toFixed(1);
+  push(cpuHist, cpuPct);
+  const cc = levelColor(cpuPct);
+  document.getElementById('h-cpu').textContent = cpuPct + '%';
+  document.getElementById('h-cpu').style.color = cc;
+  document.getElementById('clock').textContent = now;
+
+  gauge.setOption({ series: [{
+    data: [{ value: cpuPct, name: 'CPU' }],
+    progress: { itemStyle: { color: cc } },
+    detail: { color: cc },
+    pointer: { itemStyle: { color: cc } },
+  }]});
+
+  cpuLine.setOption({
+    xAxis: { data: [...timeLbls] },
+    series: [{ data: [...cpuHist] }],
+  });
+
+  // --- Memory ---
+  const mUsed  = s.MemUsed  || 0;
+  const mTotal = s.MemTotal || 1;
+  const mFree  = mTotal - mUsed;
+  const mPct   = s.MemPct || 0;
+  const mColor = levelColor(mPct);
+  document.getElementById('h-mem').textContent = fmtBytes(mUsed) + ' / ' + fmtBytes(mTotal);
+  document.getElementById('h-mem').style.color = mColor;
+
+  memDonut.setOption({ series: [{
+    data: [
+      { value: mUsed,  name: 'Used ' + fmtBytes(mUsed),   itemStyle: { color: mColor  } },
+      { value: mFree,  name: 'Free '  + fmtBytes(mFree),   itemStyle: { color: C.border } },
+    ],
+  }]});
+
+  // --- CPU Cores ---
+  const cores = s.CPUCores || [];
+  if (cores.length > 0) {
+    const labels = cores.map((_, i) => 'Core ' + i);
+    const vals   = cores.map(v => ({
+      value: +v.toFixed(1),
+      itemStyle: { color: levelColor(v) },
+    }));
+    coreBar.setOption({ yAxis: { data: labels }, series: [{ data: vals }] });
+  }
+
+  // --- Network ---
+  const rBPS = s.NetRecvBPS || 0;
+  const sBPS = s.NetSentBPS || 0;
+  push(netRecvHist, rBPS);
+  push(netSentHist, sBPS);
+  document.getElementById('h-net').textContent =
+    '↓ ' + fmtBytes(rBPS) + '/s  ↑ ' + fmtBytes(sBPS) + '/s';
+
+  netLine.setOption({
+    xAxis: { data: [...timeLbls] },
+    series: [{ data: [...netRecvHist] }, { data: [...netSentHist] }],
+  });
+
+  // --- Disk ---
+  push(dskReadHist, s.DiskReadBPS  || 0);
+  push(dskWritHist, s.DiskWriteBPS || 0);
+
+  diskLine.setOption({
+    xAxis: { data: [...timeLbls] },
+    series: [{ data: [...dskReadHist] }, { data: [...dskWritHist] }],
+  });
+
+  // --- Processes ---
+  lastProcs = s.Procs || [];
+  renderProcs();
+}
+
+/* ── Process Table ────────────────────────────────────────────────── */
+function setSort(mode) {
+  procSort = mode;
+  document.getElementById('sort-cpu').classList.toggle('active', mode === 'cpu');
+  document.getElementById('sort-mem').classList.toggle('active', mode === 'mem');
+  renderProcs();
+}
+
+function renderProcs() {
+  const sorted = [...lastProcs].sort((a, b) =>
+    procSort === 'mem' ? (b.MemRSS - a.MemRSS) : (b.CPU - a.CPU)
+  );
+
+  const tbody = document.getElementById('proc-tbody');
+  const rows = sorted.slice(0, 25).map(p => {
+    const cpuPct = (p.CPU || 0).toFixed(1);
+    const cc     = levelColor(p.CPU || 0);
+    const barW   = Math.min(p.CPU || 0, 100).toFixed(1);
+    return `
+      <tr>
+        <td style="color:var(--subtle)">${p.PID}</td>
+        <td class="name-cell">${esc(p.Name)}</td>
+        <td>
+          <div class="cpu-wrapper">
+            <span class="cpu-num" style="color:${cc}">${cpuPct}%</span>
+            <div class="cpu-bar-bg">
+              <div class="cpu-bar-fill" style="width:${barW}%;background:${cc}"></div>
+            </div>
+          </div>
+        </td>
+        <td style="color:var(--subtle)">${fmtBytes(p.MemRSS || 0)}</td>
+        <td><button class="kill-btn" onclick="killProc(${p.PID})">Kill</button></td>
+      </tr>`;
+  }).join('');
+  tbody.innerHTML = rows;
+}
+
+/* ── Kill Action ──────────────────────────────────────────────────── */
+async function killProc(pid) {
+  if (!confirm(`Send SIGKILL to process ${pid}?`)) return;
+  try {
+    const r = await fetch('/kill', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pid }),
+    });
+    if (r.ok) {
+      showToast(`Process ${pid} killed`, 'ok');
+    } else {
+      const msg = await r.text();
+      showToast(`Error: ${msg}`, 'err');
+    }
+  } catch (e) {
+    showToast(`Network error: ${e}`, 'err');
+  }
+}
+
+/* ── Toast ────────────────────────────────────────────────────────── */
+let toastTimer;
+function showToast(msg, type) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'show ' + type;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { t.className = ''; }, 3000);
+}
+
+/* ── Resize ───────────────────────────────────────────────────────── */
+const ro = new ResizeObserver(() => allCharts.forEach(c => c.resize()));
+ro.observe(document.querySelector('main'));
+</script>
+</body>
+</html>
