@@ -7,7 +7,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/ayush/zenbox/core/model"
+	"github.com/ayush1452/CLIverse/core/model"
 )
 
 // ScanMetadata stores metadata about a saved scan.

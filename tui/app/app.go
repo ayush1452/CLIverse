@@ -5,10 +5,10 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/ayush/zenbox/core/classify"
-	"github.com/ayush/zenbox/core/model"
-	"github.com/ayush/zenbox/tui/theme"
-	"github.com/ayush/zenbox/tui/widgets"
+	"github.com/ayush1452/CLIverse/core/classify"
+	"github.com/ayush1452/CLIverse/core/model"
+	"github.com/ayush1452/CLIverse/tui/theme"
+	"github.com/ayush1452/CLIverse/tui/widgets"
 )
 
 // ViewType represents the current view/screen.

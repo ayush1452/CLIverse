@@ -5,15 +5,15 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/ayush/zenbox/cmd/disk"
-	"github.com/ayush/zenbox/cmd/sysmon"
+	"github.com/ayush1452/CLIverse/cmd/disk"
+	"github.com/ayush1452/CLIverse/cmd/sysmon"
 )
 
 func main() {
 	rootCmd := &cobra.Command{
-		Use:   "zenbox",
+		Use:   "cliverse",
 		Short: "A collection of terminal-native productivity tools",
-		Long:  "zenbox - Modern CLI tools for developers and power users.",
+		Long:  "CLIverse - Modern terminal-native tools for developers and power users.",
 	}
 
 	rootCmd.AddCommand(disk.NewDiskCmd())

@@ -14,7 +14,7 @@ import (
 	"runtime"
 	"time"
 
-	core "github.com/ayush/zenbox/core/sysmon"
+	core "github.com/ayush1452/CLIverse/core/sysmon"
 )
 
 //go:embed frontend

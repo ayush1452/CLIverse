@@ -1,4 +1,4 @@
-module github.com/ayush/zenbox
+module github.com/ayush1452/CLIverse
 
 go 1.25.4
 

@@ -12,8 +12,8 @@ import (
 	"github.com/dustin/go-humanize"
 	"github.com/spf13/cobra"
 
-	"github.com/ayush/zenbox/core/model"
-	"github.com/ayush/zenbox/core/scan"
+	"github.com/ayush1452/CLIverse/core/model"
+	"github.com/ayush1452/CLIverse/core/scan"
 )
 
 var (
@@ -40,10 +40,10 @@ Safety levels:
   ⛔ DANGER  - May contain important data
 
 Examples:
-  zenbox disk junk .                     # Find junk in current dir
-  zenbox disk junk . --profile dev       # Developer-focused detection
-  zenbox disk junk . --aggressive        # Include cautionary items
-  zenbox disk junk . --apply trash       # Move junk to trash`,
+  cliverse disk junk .                     # Find junk in current dir
+  cliverse disk junk . --profile dev       # Developer-focused detection
+  cliverse disk junk . --aggressive        # Include cautionary items
+  cliverse disk junk . --apply trash       # Move junk to trash`,
 		Aliases: []string{"trash", "clean"},
 		Args:    cobra.MaximumNArgs(1),
 		RunE:    runJunk,
@@ -250,7 +250,7 @@ func outputJunkTable(report *model.JunkReport) error {
 		fmt.Printf("   ⛔ Use caution:      %s\n", humanize.IBytes(uint64(report.DangerBytes)))
 	}
 
-	fmt.Println("\n   Top junk items:\n")
+	fmt.Print("\n   Top junk items:\n\n")
 
 	maxShow := 15
 	if len(report.Candidates) < maxShow {
@@ -270,7 +270,7 @@ func outputJunkTable(report *model.JunkReport) error {
 		fmt.Printf("\n   ... and %d more items\n", len(report.Candidates)-maxShow)
 	}
 
-	fmt.Printf("\n💡 To clean up: zenbox disk junk %s --apply trash\n\n", report.RootPath)
+	fmt.Printf("\n💡 To clean up: cliverse disk junk %s --apply trash\n\n", report.RootPath)
 
 	return nil
 }

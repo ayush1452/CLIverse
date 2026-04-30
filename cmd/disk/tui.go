@@ -8,10 +8,10 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
 
-	"github.com/ayush/zenbox/core/model"
-	"github.com/ayush/zenbox/core/scan"
-	"github.com/ayush/zenbox/core/store"
-	"github.com/ayush/zenbox/tui/app"
+	"github.com/ayush1452/CLIverse/core/model"
+	"github.com/ayush1452/CLIverse/core/scan"
+	"github.com/ayush1452/CLIverse/core/store"
+	"github.com/ayush1452/CLIverse/tui/app"
 )
 
 var (
@@ -34,9 +34,9 @@ The TUI provides:
   - Safe multi-select deletion with staging
 
 Examples:
-  zenbox disk tui .              # Browse current directory
-  zenbox disk tui /var           # Browse /var
-  zenbox disk tui . --theme dim  # Use dim theme`,
+  cliverse disk tui .              # Browse current directory
+  cliverse disk tui /var           # Browse /var
+  cliverse disk tui . --theme dim  # Use dim theme`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: runTUI,
 	}
@@ -53,7 +53,7 @@ func newOverviewCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "overview [path]",
 		Short: "Launch TUI in Overview mode",
-		Long:  "Shorthand for 'zenbox disk tui --start overview'",
+		Long:  "Shorthand for 'cliverse disk tui --start overview'",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			tuiStart = "overview"

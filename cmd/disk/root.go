@@ -11,10 +11,10 @@ import (
 	"github.com/dustin/go-humanize"
 	"github.com/spf13/cobra"
 
-	"github.com/ayush/zenbox/core/classify"
-	"github.com/ayush/zenbox/core/model"
-	"github.com/ayush/zenbox/core/scan"
-	"github.com/ayush/zenbox/core/store"
+	"github.com/ayush1452/CLIverse/core/classify"
+	"github.com/ayush1452/CLIverse/core/model"
+	"github.com/ayush1452/CLIverse/core/scan"
+	"github.com/ayush1452/CLIverse/core/store"
 )
 
 // Shared flags
@@ -47,18 +47,18 @@ func NewDiskCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "disk [path]",
 		Short: "Terminal-native disk usage analyzer",
-		Long: `zenbox disk - A modern disk usage analyzer with CLI and TUI modes.
+		Long: `CLIverse disk - A modern disk usage analyzer with CLI and TUI modes.
 
 Provides fast scanning, category breakdown, duplicate detection, and junk cleanup
 with a focus on safety and actionable insights.
 
 Examples:
-  zenbox disk                    # Scan current directory
-  zenbox disk /var --top 20      # Top 20 directories in /var
-  zenbox disk . --json           # JSON output for scripting
-  zenbox disk tui .              # Interactive TUI mode
-  zenbox disk duplicates .       # Find duplicate files
-  zenbox disk junk .             # Find junk/cache directories`,
+  cliverse disk                    # Scan current directory
+  cliverse disk /var --top 20      # Top 20 directories in /var
+  cliverse disk . --json           # JSON output for scripting
+  cliverse disk tui .              # Interactive TUI mode
+  cliverse disk duplicates .       # Find duplicate files
+  cliverse disk junk .             # Find junk/cache directories`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: runDiskDefault,
 	}
@@ -248,9 +248,9 @@ func outputSummary(scan *model.Scan, overview *model.Overview) error {
 
 	// Quick insights
 	fmt.Printf("\n💡 Quick actions:\n")
-	fmt.Printf("   zenbox disk tui %s        # Interactive browser\n", scan.RootPath)
-	fmt.Printf("   zenbox disk duplicates %s # Find duplicates\n", scan.RootPath)
-	fmt.Printf("   zenbox disk junk %s       # Find cleanable junk\n\n", scan.RootPath)
+	fmt.Printf("   cliverse disk tui %s        # Interactive browser\n", scan.RootPath)
+	fmt.Printf("   cliverse disk duplicates %s # Find duplicates\n", scan.RootPath)
+	fmt.Printf("   cliverse disk junk %s       # Find cleanable junk\n\n", scan.RootPath)
 
 	return nil
 }

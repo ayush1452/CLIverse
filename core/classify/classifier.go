@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/ayush/zenbox/core/model"
+	"github.com/ayush1452/CLIverse/core/model"
 )
 
 // Rule defines a classification rule.

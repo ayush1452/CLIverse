@@ -12,7 +12,7 @@ import (
 func newCacheCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "cache",
-		Short: "Manage zenbox scan cache",
+		Short: "Manage CLIverse scan cache",
 		Long:  "List and purge cached scan results.",
 	}
 
@@ -39,7 +39,7 @@ func getCacheDir() string {
 	if err != nil {
 		cacheDir = os.TempDir()
 	}
-	return filepath.Join(cacheDir, "zenbox", "disk", "scans")
+	return filepath.Join(cacheDir, "cliverse", "disk", "scans")
 }
 
 func runCacheList(cmd *cobra.Command, args []string) error {

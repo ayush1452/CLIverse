@@ -8,7 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
 
-	tuisysmon "github.com/ayush/zenbox/tui/sysmon"
+	tuisysmon "github.com/ayush1452/CLIverse/tui/sysmon"
 )
 
 // NewSysmonCmd returns the cobra command for the system monitor.

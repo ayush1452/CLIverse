@@ -4,6 +4,7 @@
 .claude/
 
 # Build outputs
+cliverse
 zenbox
 cli_test
 *.test

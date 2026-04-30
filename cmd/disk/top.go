@@ -9,8 +9,8 @@ import (
 	"github.com/dustin/go-humanize"
 	"github.com/spf13/cobra"
 
-	"github.com/ayush/zenbox/core/model"
-	"github.com/ayush/zenbox/core/scan"
+	"github.com/ayush1452/CLIverse/core/model"
+	"github.com/ayush1452/CLIverse/core/scan"
 )
 
 var (
@@ -25,10 +25,10 @@ func newTopCmd() *cobra.Command {
 		Long: `Show the largest directories or files in the given path.
 
 Examples:
-  zenbox disk top .              # Top 10 directories
-  zenbox disk top . --files      # Top 10 files
-  zenbox disk top . -t 20        # Top 20 directories
-  zenbox disk top /var --all     # Top directories and files combined`,
+  cliverse disk top .              # Top 10 directories
+  cliverse disk top . --files      # Top 10 files
+  cliverse disk top . -t 20        # Top 20 directories
+  cliverse disk top /var --all     # Top directories and files combined`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: runTop,
 	}

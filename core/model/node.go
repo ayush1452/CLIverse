@@ -1,4 +1,4 @@
-// Package model contains the core data structures for zenbox disk.
+// Package model contains the core data structures for CLIverse disk.
 // These types are used across CLI and TUI and have no UI dependencies.
 package model
 

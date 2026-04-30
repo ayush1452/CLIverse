@@ -14,8 +14,8 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/zeebo/blake3"
 
-	"github.com/ayush/zenbox/core/model"
-	"github.com/ayush/zenbox/core/scan"
+	"github.com/ayush1452/CLIverse/core/model"
+	"github.com/ayush1452/CLIverse/core/scan"
 )
 
 var (
@@ -38,10 +38,10 @@ func newDuplicatesCmd() *cobra.Command {
   4. Optionally verify byte-by-byte before action
 
 Examples:
-  zenbox disk duplicates .                    # Find duplicates
-  zenbox disk duplicates . --min-size 10M     # Only files > 10MB
-  zenbox disk duplicates . --apply trash      # Move duplicates to trash
-  zenbox disk duplicates . --keep newest      # Keep the newest copy`,
+  cliverse disk duplicates .                    # Find duplicates
+  cliverse disk duplicates . --min-size 10M     # Only files > 10MB
+  cliverse disk duplicates . --apply trash      # Move duplicates to trash
+  cliverse disk duplicates . --keep newest      # Keep the newest copy`,
 		Aliases: []string{"dupes"},
 		Args:    cobra.MaximumNArgs(1),
 		RunE:    runDuplicates,
@@ -258,7 +258,7 @@ func outputDuplicatesTable(report *model.DuplicateReport) error {
 		fmt.Printf("   ... and %d more groups\n\n", len(report.Groups)-maxShow)
 	}
 
-	fmt.Printf("💡 To clean up: zenbox disk duplicates %s --apply trash\n\n", report.RootPath)
+	fmt.Printf("💡 To clean up: cliverse disk duplicates %s --apply trash\n\n", report.RootPath)
 
 	return nil
 }

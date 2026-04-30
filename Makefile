@@ -1,7 +1,7 @@
 .PHONY: build test lint clean install run
 
 # Binary name
-BINARY := zenbox
+BINARY := cliverse
 
 # Build the application
 build:

@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	core "github.com/ayush/zenbox/core/sysmon"
-	gui "github.com/ayush/zenbox/gui/sysmon"
-	"github.com/ayush/zenbox/tui/theme"
+	core "github.com/ayush1452/CLIverse/core/sysmon"
+	gui "github.com/ayush1452/CLIverse/gui/sysmon"
+	"github.com/ayush1452/CLIverse/tui/theme"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/dustin/go-humanize"
@@ -33,8 +33,8 @@ const (
 
 // ─── messages ─────────────────────────────────────────────────────────────────
 
-type tickMsg    time.Time
-type snapMsg    *core.Snapshot
+type tickMsg time.Time
+type snapMsg *core.Snapshot
 type guiReadyMsg string // carries the URL once the GUI server is up
 
 // ─── model ────────────────────────────────────────────────────────────────────
@@ -135,7 +135,7 @@ func launchGUICmd() tea.Cmd {
 		if err != nil {
 			return nil
 		}
-		go srv.Start() //nolint:errcheck
+		go srv.Start()                     //nolint:errcheck
 		time.Sleep(150 * time.Millisecond) // wait for the listener to bind
 		url := srv.URL()
 		gui.OpenBrowser(url)
