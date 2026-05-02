@@ -1,0 +1,817 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CLIverse · Disk Dashboard</title>
+  <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+  <style>
+    :root {
+      --bg:        #f1f5f9;
+      --surface:   #ffffff;
+      --surface2:  #f8fafc;
+      --border:    #e2e8f0;
+      --border-hi: #94a3b8;
+      --text:      #0f172a;
+      --muted:     #64748b;
+      --dim:       #94a3b8;
+      --cyan:   #0891b2;
+      --blue:   #2563eb;
+      --green:  #16a34a;
+      --amber:  #d97706;
+      --violet: #7c3aed;
+      --rose:   #e11d48;
+      --r:  14px;
+      --rs: 10px;
+      --sh: 0 1px 3px rgba(15,23,42,.06), 0 4px 20px rgba(15,23,42,.07);
+      --sh-md: 0 2px 8px rgba(15,23,42,.08), 0 12px 32px rgba(15,23,42,.08);
+      --mono: "JetBrains Mono","SF Mono",monospace;
+      --sans: "Inter","SF Pro Display","Segoe UI",sans-serif;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0; min-height: 100%;
+      font-family: var(--sans); color: var(--text);
+      background: var(--bg);
+    }
+    button, input { font: inherit; }
+
+    /* ── Fade animation ─────────────────────────────────────── */
+    .fu { opacity: 0; transform: translateY(8px); animation: fu 400ms cubic-bezier(.22,.9,.22,1) forwards; }
+    .fu:nth-child(2) { animation-delay: 50ms; }
+    .fu:nth-child(3) { animation-delay: 95ms; }
+    .fu:nth-child(4) { animation-delay: 140ms; }
+    @keyframes fu { to { opacity: 1; transform: none; } }
+
+    /* ── Top navbar ─────────────────────────────────────────── */
+    .navbar {
+      background: #fff; border-bottom: 1px solid var(--border);
+      padding: 0 28px; height: 56px;
+      display: flex; align-items: center; justify-content: space-between;
+      position: sticky; top: 0; z-index: 50;
+      box-shadow: 0 1px 3px rgba(15,23,42,.06);
+    }
+    .nav-left  { display: flex; align-items: center; gap: 10px; }
+    .nav-brand { font: 700 15px/1 var(--sans); letter-spacing: -.02em; color: var(--text); }
+    .nav-sep   { color: var(--dim); font-weight: 300; margin: 0 2px; }
+    .nav-page  { color: var(--muted); font: 500 14px/1 var(--sans); }
+    .nav-right { display: flex; gap: 10px; align-items: center; }
+
+    .pill {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 5px 12px; border-radius: 999px;
+      background: #f0fdf4; border: 1px solid #bbf7d0;
+      color: var(--green); font: 600 10px/1 var(--mono);
+      letter-spacing: .1em; text-transform: uppercase;
+    }
+    .pill .dot {
+      width: 6px; height: 6px; border-radius: 50%; background: var(--green);
+      animation: pulse 2s ease infinite;
+    }
+    @keyframes pulse { 0%,100%{box-shadow:0 0 0 0 rgba(22,163,74,.4)} 70%{box-shadow:0 0 0 6px rgba(22,163,74,0)} }
+
+    .ghost-btn {
+      display: flex; align-items: center; gap: 6px;
+      padding: 7px 16px; border-radius: 8px;
+      border: 1px solid var(--border); background: var(--surface);
+      color: var(--text); cursor: pointer; font: 500 13px/1 var(--sans);
+      transition: 120ms ease; box-shadow: var(--sh);
+    }
+    .ghost-btn:hover { background: var(--surface2); border-color: var(--border-hi); }
+
+    /* ── Page header ────────────────────────────────────────── */
+    .shell { max-width: 1600px; margin: 0 auto; padding: 0 0 56px; }
+
+    .topbar {
+      display: grid; grid-template-columns: minmax(0,1fr) auto;
+      gap: 20px; align-items: end;
+      padding: 24px 28px 20px;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 0;
+    }
+    .eyebrow {
+      display: inline-flex; align-items: center; gap: 7px;
+      font: 600 10px/1 var(--mono); letter-spacing: .16em;
+      text-transform: uppercase; color: var(--cyan); margin-bottom: 12px;
+    }
+    .eyebrow::before { content: ''; width: 14px; height: 2px; background: var(--cyan); border-radius: 1px; }
+
+    h1 {
+      margin: 0; font-size: clamp(22px,2.8vw,40px);
+      line-height: .97; letter-spacing: -.04em; font-weight: 800; color: var(--text);
+    }
+    .scan-meta { margin-top: 10px; color: var(--muted); font-size: 13px; line-height: 1.7; max-width: 82ch; }
+    .top-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+
+    /* ── Content padding ────────────────────────────────────── */
+    .content-wrap { padding: 20px 28px 0; display: flex; flex-direction: column; gap: 18px; }
+
+    /* ── KPI Strip ──────────────────────────────────────────── */
+    .strip {
+      display: grid; grid-template-columns: repeat(5, minmax(0,1fr));
+      gap: 14px;
+    }
+    .kpi {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--r); padding: 18px 20px 16px; min-height: 108px;
+      display: flex; flex-direction: column; justify-content: space-between; gap: 8px;
+      position: relative; overflow: hidden; box-shadow: var(--sh);
+      transition: box-shadow 160ms, transform 160ms;
+    }
+    .kpi:hover { box-shadow: var(--sh-md); transform: translateY(-1px); }
+    .kpi::before {
+      content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px;
+      border-radius: var(--r) var(--r) 0 0;
+    }
+    .kpi:nth-child(1)::before { background: var(--cyan);   }
+    .kpi:nth-child(2)::before { background: var(--blue);   }
+    .kpi:nth-child(3)::before { background: var(--green);  }
+    .kpi:nth-child(4)::before { background: var(--amber);  }
+    .kpi:nth-child(5)::before { background: var(--violet); }
+
+    .kpi-label  { color: var(--dim); font: 600 10px/1 var(--mono); letter-spacing: .14em; text-transform: uppercase; }
+    .kpi-value  { font-size: clamp(20px,1.9vw,28px); line-height: 1; letter-spacing: -.04em; font-weight: 800; }
+    .kpi-note   { color: var(--dim); font: 500 11px/1.4 var(--mono); }
+    #kpi-root      { color: var(--cyan);   }
+    #kpi-used      { color: var(--blue);   }
+    #kpi-inventory { color: var(--green);  }
+    #kpi-dir       { color: var(--amber);  }
+    #kpi-file      { color: var(--violet); }
+
+    /* ── Workspace ──────────────────────────────────────────── */
+    .workspace { display: grid; grid-template-columns: minmax(0,1.75fr) minmax(270px,.82fr); gap: 18px; }
+    .stack { display: grid; gap: 18px; }
+
+    .panel {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--r); box-shadow: var(--sh);
+      overflow: hidden; transition: box-shadow 180ms, border-color 180ms;
+    }
+    .panel:hover { box-shadow: var(--sh-md); border-color: var(--border-hi); }
+    .panel-head { padding: 20px 22px 0; }
+    .panel-title { margin: 0; font-size: 15px; font-weight: 700; letter-spacing: -.02em; color: var(--text); }
+    .panel-sub   { margin-top: 4px; color: var(--dim); font: 500 11px/1 var(--mono); }
+
+    /* ── Capacity panel ─────────────────────────────────────── */
+    .cap-grid {
+      display: grid; grid-template-columns: minmax(0,1fr) 400px; min-height: 480px;
+    }
+    .cap-left  { padding: 16px 22px 24px; border-right: 1px solid var(--border); }
+    .cap-right { padding: 10px 12px; background: var(--surface2); }
+
+    /* ── Scan stat rows ─────────────────────────────────────── */
+    .stat-rows { display: grid; gap: 0; margin-top: 14px; }
+    .stat-row {
+      display: flex; align-items: baseline; justify-content: space-between;
+      gap: 12px; padding: 10px 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .stat-row:last-child { border-bottom: none; }
+    .stat-key { color: var(--dim); font: 600 10px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; flex-shrink: 0; }
+    .stat-val { font: 700 14px/1 var(--sans); letter-spacing: -.02em; color: var(--text); text-align: right; word-break: break-all; }
+
+    /* ── Bands ──────────────────────────────────────────────── */
+    .bands { display: grid; gap: 14px; margin-top: 18px; }
+    .band-block label {
+      display: flex; justify-content: space-between; gap: 12px; margin-bottom: 7px;
+      color: var(--muted); font: 600 10px/1 var(--mono);
+    }
+    .band-track { height: 6px; border-radius: 999px; background: var(--border); overflow: hidden; }
+    .bfill, .bfill2 { height: 100%; border-radius: 999px; transition: width 700ms cubic-bezier(.22,.9,.22,1); }
+    .bfill  { background: linear-gradient(90deg, var(--cyan),   #22d3ee); }
+    .bfill2 { background: linear-gradient(90deg, var(--blue),   #60a5fa); }
+    .band-note { margin-top: 5px; color: var(--dim); font-size: 11px; }
+
+    /* ── Table controls ─────────────────────────────────────── */
+    .list-controls { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; padding: 14px 22px 0; }
+    .chips { display: flex; gap: 6px; flex-wrap: wrap; }
+    .chip {
+      border: 1px solid var(--border); background: var(--surface); color: var(--muted);
+      padding: 6px 13px; border-radius: 999px; cursor: pointer;
+      font: 500 11px/1 var(--mono); transition: 120ms ease;
+    }
+    .chip:hover  { color: var(--text); border-color: var(--border-hi); background: var(--surface2); }
+    .chip.active { color: var(--cyan); border-color: #a5f3fc; background: #ecfeff; }
+
+    .search-box {
+      margin-left: auto; min-width: min(290px,100%); flex: 1; max-width: 370px;
+      display: flex; align-items: center; gap: 8px;
+      border: 1px solid var(--border); background: var(--surface);
+      border-radius: 999px; padding: 0 13px; transition: 140ms ease;
+    }
+    .search-box:focus-within { border-color: var(--cyan); box-shadow: 0 0 0 3px rgba(8,145,178,.12); }
+    .search-box input { width: 100%; border: none; outline: none; background: transparent; color: var(--text); padding: 9px 0; font-size: 12px; }
+    .search-box input::placeholder { color: var(--dim); }
+
+    .tbl { width: 100%; border-collapse: collapse; margin-top: 12px; }
+    .tbl thead th {
+      text-align: left; color: var(--dim); font: 600 9px/1.2 var(--mono);
+      letter-spacing: .12em; text-transform: uppercase;
+      padding: 0 22px 10px; cursor: pointer; user-select: none; transition: color 120ms;
+    }
+    .tbl thead th:hover { color: var(--text); }
+    .tbl tbody td { padding: 12px 22px; border-top: 1px solid var(--border); vertical-align: top; font-size: 13px; color: var(--text); }
+    .tbl tbody tr { cursor: pointer; transition: background 80ms; }
+    .tbl tbody tr:hover { background: var(--surface2); }
+    .tbl tbody tr.sel { background: #ecfeff; outline: 1px solid #a5f3fc; }
+    .sarr { margin-left: 3px; opacity: .5; font-size: 9px; }
+    .fpath { color: var(--muted); font-size: 11px; line-height: 1.5; margin-top: 2px; word-break: break-word; }
+    .bcol { min-width: 130px; }
+    .mtrack { margin-top: 6px; height: 3px; border-radius: 999px; background: var(--border); overflow: hidden; }
+    .mtrack span { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--blue), #60a5fa); }
+    .mono  { font-family: var(--mono); }
+    .muted { color: var(--muted); }
+
+    /* ── Side panels ────────────────────────────────────────── */
+    .side-list, .meta-list { display: grid; gap: 12px; padding: 14px 20px 20px; }
+    .side-item, .meta-row  { padding-bottom: 12px; border-bottom: 1px solid var(--border); }
+    .side-item:last-child, .meta-row:last-child { border-bottom: none; padding-bottom: 0; }
+    .side-item strong { display: block; font-size: 13px; font-weight: 600; line-height: 1.35; color: var(--text); }
+    .side-item small  { display: block; margin-top: 4px; color: var(--muted); font: 500 11px/1.5 var(--mono); }
+    .empty { padding: 20px; color: var(--dim); font-size: 12px; }
+
+    /* ── Detail panel ───────────────────────────────────────── */
+    .detail-panel {
+      position: fixed; right: 0; top: 0; bottom: 0; width: 360px;
+      background: var(--surface); border-left: 1px solid var(--border);
+      z-index: 200; padding: 24px 20px; overflow-y: auto;
+      transform: translateX(100%); transition: transform 200ms cubic-bezier(.2,0,0,1);
+      box-shadow: -8px 0 32px rgba(15,23,42,.12);
+    }
+    .detail-panel.open { transform: translateX(0); }
+    .det-close {
+      position: absolute; top: 14px; right: 14px;
+      background: var(--surface2); border: 1px solid var(--border);
+      color: var(--muted); width: 26px; height: 26px; border-radius: 50%;
+      cursor: pointer; font-size: 12px; display: flex; align-items: center; justify-content: center; transition: 120ms;
+    }
+    .det-close:hover { background: var(--border); color: var(--text); }
+    .det-name { font-size: 14px; font-weight: 700; margin: 0 0 3px; word-break: break-all; color: var(--text); }
+    .det-kind { font: 500 9px/1.2 var(--mono); color: var(--muted); letter-spacing: .12em; text-transform: uppercase; margin-bottom: 16px; }
+    .det-row  { display: flex; justify-content: space-between; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 12px; }
+    .det-row:last-child { border-bottom: none; }
+    .det-row .k { color: var(--dim); font-family: var(--mono); font-size: 9px; text-transform: uppercase; letter-spacing: .12em; flex-shrink: 0; }
+    .det-row .v { text-align: right; word-break: break-all; font-family: var(--mono); font-size: 10px; color: var(--text); }
+    .det-actions { display: flex; gap: 7px; margin-top: 16px; flex-wrap: wrap; }
+    .det-btn {
+      padding: 7px 13px; border-radius: 8px; border: 1px solid var(--border);
+      background: var(--surface2); color: var(--text); cursor: pointer;
+      font: 500 10px/1 var(--mono); transition: 120ms;
+    }
+    .det-btn:hover { background: #ecfeff; border-color: #a5f3fc; color: var(--cyan); }
+
+    /* ── Toast ──────────────────────────────────────────────── */
+    .toast {
+      position: fixed; bottom: 24px; left: 50%;
+      transform: translateX(-50%) translateY(12px);
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 10px; padding: 9px 18px;
+      font: 500 12px/1.4 var(--mono); color: var(--text);
+      z-index: 500; opacity: 0; transition: opacity 200ms, transform 200ms;
+      pointer-events: none; box-shadow: var(--sh-md);
+    }
+    .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+    /* ── Scrollbar ──────────────────────────────────────────── */
+    ::-webkit-scrollbar { width: 5px; height: 5px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 999px; }
+    ::-webkit-scrollbar-thumb:hover { background: var(--dim); }
+
+    /* ── Responsive ─────────────────────────────────────────── */
+    @media (max-width: 1240px) {
+      .strip { grid-template-columns: repeat(3, minmax(0,1fr)); }
+      .workspace, .cap-grid { grid-template-columns: 1fr; }
+      .cap-left { border-right: none; border-bottom: 1px solid var(--border); }
+    }
+    @media (max-width: 700px) {
+      .topbar, .content-wrap { padding-left: 16px; padding-right: 16px; }
+      .topbar { grid-template-columns: 1fr; }
+      .top-actions { justify-content: flex-start; }
+      .strip { grid-template-columns: repeat(2, minmax(0,1fr)); }
+      .search-box { margin-left: 0; min-width: 100%; }
+      .tbl thead { display: none; }
+      .tbl, .tbl tbody, .tbl tr, .tbl td { display: block; width: 100%; }
+    }
+  </style>
+</head>
+<body>
+<div class="shell">
+
+  <!-- ── Top navbar ────────────────────────────────────────── -->
+  <nav class="navbar fu">
+    <div class="nav-left">
+      <span class="nav-brand">CLIverse</span>
+      <span class="nav-sep">/</span>
+      <span class="nav-page">Disk Dashboard</span>
+    </div>
+    <div class="nav-right">
+      <div class="pill"><span class="dot"></span><span id="live-label">Snapshot</span></div>
+      <button class="ghost-btn" onclick="reloadReport()">↺ Refresh</button>
+    </div>
+  </nav>
+
+  <!-- ── Page header ───────────────────────────────────────── -->
+  <header class="topbar fu">
+    <div>
+      <div class="eyebrow">Disk Dashboard</div>
+      <h1 id="title">Loading scan&hellip;</h1>
+      <div class="scan-meta" id="scan-meta">Preparing report.</div>
+    </div>
+  </header>
+
+  <div class="content-wrap">
+
+  <!-- ── KPI Strip ─────────────────────────────────────────── -->
+  <section class="strip fu">
+    <article class="kpi">
+      <div class="kpi-label">Scanned Footprint</div>
+      <div class="kpi-value" id="kpi-root">--</div>
+      <div class="kpi-note"  id="kpi-root-note">--</div>
+    </article>
+    <article class="kpi">
+      <div class="kpi-label">Filesystem Used</div>
+      <div class="kpi-value" id="kpi-used">--</div>
+      <div class="kpi-note"  id="kpi-used-note">--</div>
+    </article>
+    <article class="kpi">
+      <div class="kpi-label">Inventory</div>
+      <div class="kpi-value" id="kpi-inventory">--</div>
+      <div class="kpi-note"  id="kpi-inventory-note">--</div>
+    </article>
+    <article class="kpi">
+      <div class="kpi-label">Largest Directory</div>
+      <div class="kpi-value" id="kpi-dir">--</div>
+      <div class="kpi-note"  id="kpi-dir-note">--</div>
+    </article>
+    <article class="kpi">
+      <div class="kpi-label">Largest File</div>
+      <div class="kpi-value" id="kpi-file">--</div>
+      <div class="kpi-note"  id="kpi-file-note">--</div>
+    </article>
+  </section>
+
+  <main class="workspace">
+    <!-- ── Left column ──────────────────────────────────────── -->
+    <div class="stack">
+
+      <!-- Capacity panel -->
+      <section class="panel fu">
+        <div class="panel-head">
+          <h2 class="panel-title">Capacity &amp; Composition</h2>
+          <p class="panel-sub">Filesystem occupancy and a category breakdown of everything scanned.</p>
+        </div>
+        <div class="cap-grid">
+          <div class="cap-left">
+            <div class="stat-rows">
+              <div class="stat-row">
+                <span class="stat-key">Scan mode</span>
+                <span class="stat-val" id="mode-pill">--</span>
+              </div>
+              <div class="stat-row">
+                <span class="stat-key">Duration</span>
+                <span class="stat-val" id="scan-duration">--</span>
+              </div>
+              <div class="stat-row">
+                <span class="stat-key">Host</span>
+                <span class="stat-val" id="host-name">--</span>
+              </div>
+              <div class="stat-row">
+                <span class="stat-key">Filesystem</span>
+                <span class="stat-val" id="fs-type">--</span>
+              </div>
+            </div>
+            <div class="bands">
+              <div class="band-block">
+                <label><span>Filesystem occupancy</span><span id="capacity-label">--</span></label>
+                <div class="band-track"><span class="bfill"  id="capacity-band" style="width:0"></span></div>
+                <div class="band-note" id="capacity-note">--</div>
+              </div>
+              <div class="band-block">
+                <label><span>Scan share</span><span id="share-label">--</span></label>
+                <div class="band-track"><span class="bfill2" id="share-band" style="width:0"></span></div>
+                <div class="band-note" id="share-note">--</div>
+              </div>
+            </div>
+            <!-- ECharts treemap -->
+            <div id="treemap-chart" style="height:210px;width:100%;margin-top:18px;"></div>
+          </div>
+
+          <!-- Category donut — wider zone for a proper-sized chart -->
+          <div class="cap-right">
+            <div id="category-chart" style="height:480px;width:100%;"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Ranked explorer -->
+      <section class="panel fu">
+        <div class="panel-head">
+          <h2 class="panel-title">Ranked Explorer</h2>
+          <p class="panel-sub">Root composition, largest dirs, largest files, recent changes. Search filters by name or path.</p>
+        </div>
+        <div class="list-controls">
+          <div class="chips">
+            <button class="chip active" data-list="root"   type="button">Root</button>
+            <button class="chip"        data-list="dirs"   type="button">Largest dirs</button>
+            <button class="chip"        data-list="files"  type="button">Largest files</button>
+            <button class="chip"        data-list="recent" type="button">Recent</button>
+          </div>
+          <label class="search-box">
+            <span class="mono muted" style="font-size:13px;opacity:.5">⌕</span>
+            <input id="list-search" type="text" placeholder="Filter by name or path…">
+          </label>
+        </div>
+        <table class="tbl">
+          <thead>
+            <tr>
+              <th onclick="sortTable('name')">Node<span class="sarr" id="sort-name"></span></th>
+              <th onclick="sortTable('category')">Category<span class="sarr" id="sort-category"></span></th>
+              <th onclick="sortTable('size')">Size<span class="sarr" id="sort-size">▼</span></th>
+              <th onclick="sortTable('percent')">Share<span class="sarr" id="sort-percent"></span></th>
+            </tr>
+          </thead>
+          <tbody id="ranked-body"></tbody>
+        </table>
+      </section>
+    </div>
+
+    <!-- ── Right column ──────────────────────────────────────── -->
+    <div class="stack">
+      <section class="panel fu">
+        <div class="panel-head">
+          <h2 class="panel-title">File-type Pressure</h2>
+          <p class="panel-sub">Extensions dominating the scan by footprint.</p>
+        </div>
+        <div id="ext-chart" style="height:280px;width:100%;padding:6px 0;"></div>
+      </section>
+
+      <section class="panel fu">
+        <div class="panel-head">
+          <h2 class="panel-title">Recently Changed</h2>
+          <p class="panel-sub">Fresh files often explain sudden scan growth.</p>
+        </div>
+        <div class="side-list" id="recent-list"></div>
+      </section>
+
+      <section class="panel fu">
+        <div class="panel-head">
+          <h2 class="panel-title">Scan Metadata</h2>
+          <p class="panel-sub">Operational context for this report.</p>
+        </div>
+        <div class="meta-list" id="meta-list"></div>
+      </section>
+    </div>
+  </main>
+  </div><!-- /.content-wrap -->
+</div>
+
+<!-- ── Detail panel ──────────────────────────────────────────── -->
+<div id="detail-panel" class="detail-panel">
+  <button class="det-close" onclick="hideDetail()">✕</button>
+  <div class="det-name" id="dp-name">—</div>
+  <div class="det-kind" id="dp-kind">—</div>
+  <div id="dp-rows"></div>
+  <div class="det-actions">
+    <button class="det-btn" onclick="copyDetailPath()">Copy path</button>
+    <button class="det-btn" onclick="revealDetailPath()">Open location</button>
+  </div>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<script>
+/* ── Palette (light theme) ────────────────────────────────── */
+const CAT = {
+  "Applications": "#2563eb",
+  "Developer":    "#0891b2",
+  "Documents":    "#d97706",
+  "Photos":       "#db2777",
+  "Music":        "#16a34a",
+  "Videos":       "#dc2626",
+  "System Data":  "#64748b",
+  "Other":        "#7c3aed",
+  "Unknown":      "#94a3b8",
+};
+
+const TT = {
+  backgroundColor: '#ffffff',
+  borderColor: '#e2e8f0',
+  textStyle: { color: '#0f172a', fontFamily: '"JetBrains Mono",monospace', fontSize: 12 },
+  extraCssText: 'border-radius:10px;box-shadow:0 4px 20px rgba(15,23,42,.12)',
+};
+
+let report = null, activeList = "root";
+let tableSort = { col: "size", dir: -1 };
+let selectedRow = -1, detailItem = null;
+let catChart = null, mapChart = null, extChart = null;
+
+/* ── Formatters ───────────────────────────────────────────── */
+function bytes(n) {
+  const v = Number(n||0);
+  if (v < 1024)      return v.toFixed(0)+' B';
+  if (v < 1024**2)   return (v/1024).toFixed(1)+' KB';
+  if (v < 1024**3)   return (v/1024**2).toFixed(1)+' MB';
+  if (v < 1024**4)   return (v/1024**3).toFixed(2)+' GB';
+  return (v/1024**4).toFixed(2)+' TB';
+}
+function count(n) {
+  const v = Number(n||0);
+  return v>=1e6?`${(v/1e6).toFixed(1)}M`:v>=1e3?`${(v/1e3).toFixed(1)}K`:`${v}`;
+}
+function pct(v,d=1) { return `${Number(v||0).toFixed(d)}%`; }
+function shortPath(p) { return !p?"--":p.length>38?`…${p.slice(-35)}`:p; }
+function date(v) {
+  if (!v) return "--";
+  return new Date(v).toLocaleString([],{year:"numeric",month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"});
+}
+function dur(ms) {
+  const t=Math.max(0,Number(ms||0));
+  if(t<1000) return `${t.toFixed(0)} ms`;
+  const s=t/1000; if(s<60) return `${s.toFixed(1)} s`;
+  return `${Math.floor(s/60)}m ${Math.round(s%60)}s`;
+}
+function colorFor(n) { return CAT[n]||CAT.Unknown; }
+function set(id,v) { const el=document.getElementById(id); if(el) el.textContent=v; }
+function esc(v) { return String(v).replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;"); }
+
+/* ── Data ─────────────────────────────────────────────────── */
+async function reloadReport() {
+  const r = await fetch("/api/report",{cache:"no-store"});
+  report = await r.json(); render();
+}
+
+function render() {
+  if (!report) return;
+  const ld=report.largest_dirs[0], lf=report.largest_files[0];
+
+  set("title", report.root_path);
+  set("scan-meta",
+    `${count(report.stats.files)} files / ${count(report.stats.dirs)} directories on `+
+    `${report.host.hostname||report.host.os}. `+
+    `Started ${date(report.started_at)}, completed ${date(report.ended_at)}.`
+  );
+  set("kpi-root",           bytes(report.root_size));
+  set("kpi-root-note",      `${pct(report.scan_share_pct)} of mounted filesystem`);
+  set("kpi-used",           bytes(report.used_bytes));
+  set("kpi-used-note",      `${pct(report.capacity_pct)} used · ${bytes(report.free_bytes)} free`);
+  set("kpi-inventory",      `${count(report.stats.files)} files`);
+  set("kpi-inventory-note", `${count(report.stats.dirs)} dirs / ${count(report.stats.nodes)} nodes`);
+  set("kpi-dir",            ld?ld.name:"--");
+  set("kpi-dir-note",       ld?`${bytes(ld.size)} · ${shortPath(ld.path)}`:"--");
+  set("kpi-file",           lf?lf.name:"--");
+  set("kpi-file-note",      lf?`${bytes(lf.size)} · ${shortPath(lf.path)}`:"--");
+  set("mode-pill",          report.size_mode);
+  set("scan-duration",      dur(report.elapsed_ms));
+  set("host-name",          report.host.hostname||`${report.host.os}/${report.host.arch}`);
+  set("fs-type",            report.fs.fs_type||"filesystem");
+  set("capacity-label",     `${bytes(report.used_bytes)} / ${bytes(report.fs.total_bytes)}`);
+  set("capacity-note",      `${bytes(report.free_bytes)} free on ${report.fs.mount_point||report.root_path}`);
+  set("share-label",        `${bytes(report.root_size)} scanned`);
+  set("share-note",         `Scan accounts for ${pct(report.scan_share_pct)} of the filesystem.`);
+  set("live-label",         `${report.host.os} · snapshot`);
+
+  document.getElementById("capacity-band").style.width = `${Math.min(report.capacity_pct,100)}%`;
+  document.getElementById("share-band").style.width    = `${Math.min(report.scan_share_pct,100)}%`;
+
+  renderRing(report.categories, report.root_size);
+  renderTiles(report.root_children);
+  renderRanked();
+  renderExtensions(report.extensions);
+  renderRecent(report.recent_files);
+  renderMeta();
+}
+
+/* ── ECharts: Category Donut ──────────────────────────────── */
+function renderRing(cats, total) {
+  if (!catChart) catChart = echarts.init(document.getElementById("category-chart"));
+
+  /*
+   * Container is 400 × 480.
+   * min(400,480)/2 = 200 → outer radius 70% = 140px, diameter 280px ✓
+   * Pie center at ['50%','38%'] = [200px, 182px].
+   * title[0] top:'27%' → top-edge at 130px, text ~27px tall → center 143px (above pie center).
+   * title[1] top:'36%' → top-edge at 173px (≈ pie center y). ✓
+   * Legend horizontal at bottom:'6%' (≈29px from bottom). ✓
+   */
+  // Chart: 400×480px. Pie center=[50%,42%]=[200px,202px].
+  // Inner radius=42%*min(400,480)/2=84px. Outer=70%*200=140px.
+  // title[0] (22px font ~26px tall): center at ~193px → top=180px/480=37.5%
+  // title[1] (9px font ~11px tall):  center at ~218px → top=213px/480=44.4%
+  catChart.setOption({
+    backgroundColor: "transparent",
+    title: [
+      {
+        text: bytes(total),
+        left: "50%", top: "37%", textAlign: "center",
+        textStyle: { fontSize: 22, fontWeight: "800", color: "#0f172a", fontFamily: '"Inter","SF Pro Display",sans-serif' },
+      },
+      {
+        text: "SCANNED SIZE",
+        left: "50%", top: "45%", textAlign: "center",
+        textStyle: { fontSize: 9, fontWeight: "700", color: "#94a3b8", fontFamily: '"JetBrains Mono",monospace', letterSpacing: 1 },
+      },
+    ],
+    tooltip: {
+      trigger: "item", ...TT,
+      formatter: p => `<b>${p.name}</b><br/>${bytes(p.value)} &nbsp;·&nbsp; ${p.percent.toFixed(1)}%`,
+    },
+    legend: {
+      orient: "horizontal", bottom: "3%", left: "center",
+      icon: "circle", itemWidth: 8, itemHeight: 8, itemGap: 16,
+      textStyle: { color: "#64748b", fontSize: 11, fontFamily: '"Inter",sans-serif' },
+      formatter: n => { const c=cats.find(x=>x.name===n); return c?`${n}  ${pct(c.percent)}`:n; },
+    },
+    series: [{
+      type: "pie",
+      radius: ["42%", "70%"],
+      center: ["50%", "42%"],
+      avoidLabelOverlap: true,
+      itemStyle: { borderColor: "#ffffff", borderWidth: 3, borderRadius: 6 },
+      label: { show: false },
+      emphasis: {
+        scale: true, scaleSize: 5,
+        label: { show: true, formatter: "{b}\n{d}%", color: "#64748b", fontFamily: '"JetBrains Mono",monospace', fontSize: 11 },
+      },
+      data: cats.map(c => ({ name: c.name, value: c.bytes, itemStyle: { color: colorFor(c.name) } })),
+    }],
+  });
+}
+
+/* ── ECharts: Treemap ─────────────────────────────────────── */
+function renderTiles(items) {
+  const host = document.getElementById("treemap-chart");
+  if (!items||!items.length) { host.innerHTML = `<div class="empty">No root children.</div>`; return; }
+  if (!mapChart) mapChart = echarts.init(host);
+
+  mapChart.setOption({
+    backgroundColor: "transparent",
+    tooltip: {
+      ...TT,
+      formatter: p => {
+        const e=p.data.extra;
+        return `<b>${esc(p.name)}</b><br/>${bytes(e.size)} · ${pct(e.percent)}<br/><span style="color:#7ca4c8">${esc(e.category)}</span>`;
+      },
+    },
+    series: [{
+      type: "treemap",
+      data: items.map(i=>({ name:i.name, value:i.size, itemStyle:{color:colorFor(i.category),opacity:.78}, extra:i })),
+      roam: false, nodeClick: false,
+      width:"100%", height:"100%", top:0, left:0, right:0, bottom:0,
+      squareRatio: 0.6,
+      itemStyle: { gapWidth:5, borderWidth:0, borderRadius:10 },
+      emphasis: { itemStyle: { borderColor:"rgba(255,255,255,.45)", borderWidth:2 } },
+      label: { show:true, color:"#fff", fontFamily:'"Inter",sans-serif', fontSize:12, overflow:"truncate", formatter: p=>`${p.name}\n${bytes(p.data.extra.size)}` },
+      breadcrumb: { show:false },
+    }],
+  });
+}
+
+/* ── ECharts: Extension Bars ──────────────────────────────── */
+function renderExtensions(items) {
+  const host = document.getElementById("ext-chart");
+  if (!items||!items.length) { host.innerHTML=`<div class="empty">No extension data.</div>`; return; }
+  if (!extChart) extChart = echarts.init(host);
+
+  const rev = [...items].reverse();
+  extChart.setOption({
+    backgroundColor: "transparent",
+    tooltip: {
+      trigger:"axis", axisPointer:{type:"shadow"}, ...TT,
+      formatter: params => {
+        const it=rev[params[0].dataIndex];
+        return `<b>${params[0].name}</b><br/>${bytes(it.bytes)} · ${it.count} files · ${pct(it.percent)}`;
+      },
+    },
+    grid: { top:8, right:88, bottom:8, left:68, containLabel:false },
+    xAxis: { type:"value", show:false },
+    yAxis: {
+      type:"category", data:rev.map(i=>i.ext),
+      axisLabel:{ color:"#64748b", fontFamily:'"JetBrains Mono",monospace', fontSize:11 },
+      axisLine:{ lineStyle:{color:"rgba(99,179,237,.1)"} }, axisTick:{show:false},
+    },
+    series: [{
+      type:"bar",
+      data: rev.map(i=>({
+        value: i.bytes,
+        itemStyle: {
+          color: { type:"linear",x:0,y:0,x2:1,y2:0,
+            colorStops:[{offset:0,color:"#fbbf24"},{offset:1,color:"#fde68a"}] },
+          borderRadius:[0,6,6,0],
+        },
+      })),
+      barMaxWidth:18, showBackground:true,
+      backgroundStyle:{ color:"rgba(255,255,255,.04)", borderRadius:[0,6,6,0] },
+      label:{ show:true, position:"right", formatter:p=>bytes(rev[p.dataIndex].bytes), color:"#7ca4c8", fontFamily:'"JetBrains Mono",monospace', fontSize:10 },
+    }],
+  });
+}
+
+/* ── Table ────────────────────────────────────────────────── */
+function sortTable(col) {
+  tableSort.dir = tableSort.col===col ? tableSort.dir*-1 : (col==="name"||col==="category"?1:-1);
+  tableSort.col = col;
+  document.querySelectorAll(".sarr").forEach(e=>e.textContent="");
+  const a=document.getElementById("sort-"+col); if(a) a.textContent=tableSort.dir===1?"▲":"▼";
+  renderRanked();
+}
+
+function renderRanked() {
+  const tbody=document.getElementById("ranked-body");
+  const q=document.getElementById("list-search").value.trim().toLowerCase();
+  let entries=getEntries().filter(i=>!q||i.name.toLowerCase().includes(q)||i.path.toLowerCase().includes(q));
+  const {col,dir}=tableSort;
+  entries=[...entries].sort((a,b)=>{
+    let va=a[col]??"",vb=b[col]??"";
+    if(typeof va==="string"){va=va.toLowerCase();vb=vb.toLowerCase();}
+    return va<vb?-dir:va>vb?dir:0;
+  });
+  if (!entries.length) { tbody.innerHTML=`<tr><td colspan="4" class="empty">No entries match.</td></tr>`; return; }
+  tbody.innerHTML=entries.map((item,idx)=>`
+    <tr data-idx="${idx}" onclick="showDetail(${idx})" class="${selectedRow===idx?"sel":""}">
+      <td><strong>${esc(item.name)}</strong><div class="fpath">${esc(item.path)}</div></td>
+      <td class="mono muted">${esc(item.category||item.kind)}</td>
+      <td class="mono">${bytes(item.size)}</td>
+      <td class="bcol"><div class="mono">${pct(item.percent)}</div><div class="mtrack"><span style="width:${Math.min(item.percent,100)}%"></span></div></td>
+    </tr>
+  `).join("");
+  window._rows=entries;
+}
+
+function getEntries() {
+  switch(activeList){case"dirs":return report.largest_dirs;case"files":return report.largest_files;case"recent":return report.recent_files;default:return report.root_children;}
+}
+
+/* ── Detail panel ─────────────────────────────────────────── */
+function showDetail(idx) {
+  const item=(window._rows||[])[idx]; if(!item) return;
+  selectedRow=idx; detailItem=item; renderRanked();
+  document.getElementById("dp-name").textContent=item.name;
+  document.getElementById("dp-kind").textContent=`${item.kind}  ·  ${item.category}`;
+  const rows=[["Size",bytes(item.size)],["Share",pct(item.percent)],["Path",item.path],["Modified",date(item.modified_at)]];
+  if(item.file_count) rows.push(["Files",count(item.file_count)]);
+  if(item.dir_count)  rows.push(["Dirs", count(item.dir_count)]);
+  document.getElementById("dp-rows").innerHTML=rows.map(([k,v])=>`<div class="det-row"><span class="k">${esc(k)}</span><span class="v">${esc(String(v))}</span></div>`).join("");
+  document.getElementById("detail-panel").classList.add("open");
+}
+function hideDetail() {
+  selectedRow=-1; detailItem=null;
+  document.getElementById("detail-panel").classList.remove("open"); renderRanked();
+}
+function copyDetailPath()   { if(detailItem) navigator.clipboard.writeText(detailItem.path).then(()=>toast("Path copied!")); }
+function revealDetailPath() { if(detailItem) fetch("/api/reveal?path="+encodeURIComponent(detailItem.path)); }
+function navigateRow(d) {
+  const e=window._rows||[]; if(!e.length) return;
+  showDetail(Math.max(0,Math.min(e.length-1,selectedRow+d)));
+}
+
+/* ── Side panels ──────────────────────────────────────────── */
+function renderRecent(items) {
+  const h=document.getElementById("recent-list");
+  if(!items.length){h.innerHTML=`<div class="empty">No recent files.</div>`;return;}
+  h.innerHTML=items.map(i=>`<article class="side-item"><strong>${esc(i.name)}</strong><small>${bytes(i.size)} · ${date(i.modified_at)}</small><small>${esc(i.path)}</small></article>`).join("");
+}
+function renderMeta() {
+  const h=document.getElementById("meta-list");
+  const rows=[["Mounted at",report.fs.mount_point||"--"],["Filesystem",report.fs.fs_type||"--"],["Device",report.fs.device||"--"],["Platform",`${report.host.os}/${report.host.arch}`],["Started",date(report.started_at)],["Ended",date(report.ended_at)]];
+  h.innerHTML=rows.map(([l,v])=>`<div class="meta-row"><div style="color:var(--muted);font:600 9px/1.3 var(--mono);letter-spacing:.12em;text-transform:uppercase;margin-bottom:7px">${esc(l)}</div><div style="font-size:12px">${esc(v)}</div></div>`).join("");
+}
+
+/* ── Toast ────────────────────────────────────────────────── */
+let _tt=null;
+function toast(msg) {
+  const el=document.getElementById("toast");
+  el.textContent=msg; el.classList.add("show");
+  clearTimeout(_tt); _tt=setTimeout(()=>el.classList.remove("show"),2000);
+}
+
+/* ── Wiring ───────────────────────────────────────────────── */
+document.querySelectorAll(".chip").forEach(b=>{
+  b.addEventListener("click",()=>{
+    document.querySelectorAll(".chip").forEach(c=>c.classList.remove("active"));
+    b.classList.add("active"); activeList=b.dataset.list; renderRanked();
+  });
+});
+document.getElementById("list-search").addEventListener("input",renderRanked);
+
+window.addEventListener("resize",()=>{
+  if(catChart) catChart.resize();
+  if(mapChart)  mapChart.resize();
+  if(extChart)  extChart.resize();
+});
+window.addEventListener("keydown",e=>{
+  const t=e.target.tagName.toLowerCase();
+  if(t==="input"||t==="textarea") return;
+  if(e.key==="j"||e.key==="ArrowDown"){e.preventDefault();navigateRow(1);}
+  if(e.key==="k"||e.key==="ArrowUp")  {e.preventDefault();navigateRow(-1);}
+  if(e.key==="Escape") hideDetail();
+  if(e.key==="/"){e.preventDefault();document.getElementById("list-search").focus();}
+});
+
+reloadReport().catch(err=>{
+  document.getElementById("title").textContent="Unable to load report";
+  document.getElementById("scan-meta").textContent=err.message;
+});
+</script>
+</body>
+</html>
