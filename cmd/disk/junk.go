@@ -9,11 +9,17 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/lipgloss"
 	"github.com/dustin/go-humanize"
 	"github.com/spf13/cobra"
 
 	"github.com/ayush1452/CLIverse/core/model"
 	"github.com/ayush1452/CLIverse/core/scan"
+)
+
+var (
+	junkPage    int
+	junkPerPage int
 )
 
 var (
@@ -53,6 +59,8 @@ Examples:
 	cmd.Flags().BoolVar(&junkAggressive, "aggressive", false, "Include cautionary items")
 	cmd.Flags().StringVar(&junkApply, "apply", "none", "Action: none, trash, delete")
 	cmd.Flags().BoolVar(&junkYes, "yes", false, "Confirm destructive action")
+	cmd.Flags().IntVar(&junkPage, "page", 1, "Page number")
+	cmd.Flags().IntVar(&junkPerPage, "per-page", 0, "Rows per page (0 = all)")
 
 	return cmd
 }
@@ -231,46 +239,42 @@ func parseProfile(s string) model.JunkProfile {
 
 func outputJunkTable(report *model.JunkReport) error {
 	if len(report.Candidates) == 0 {
-		fmt.Println("\n✅ No junk found!")
+		fmt.Println("\nNo junk found!")
 		return nil
 	}
 
-	fmt.Printf("\n♻ Found %d junk items (%s)\n\n",
-		len(report.Candidates),
-		humanize.IBytes(uint64(report.TotalBytesAlloc)))
-
-	// Breakdown by safety
+	// Summary header
+	fmt.Printf("\nFound %d junk items  total: %s\n",
+		len(report.Candidates), humanize.IBytes(uint64(report.TotalBytesAlloc)))
 	if report.SafeBytes > 0 {
-		fmt.Printf("   ✓ Safe to clean:    %s\n", humanize.IBytes(uint64(report.SafeBytes)))
+		fmt.Printf("  safe: %s\n", humanize.IBytes(uint64(report.SafeBytes)))
 	}
 	if report.CautionBytes > 0 {
-		fmt.Printf("   ⚠ Needs review:     %s\n", humanize.IBytes(uint64(report.CautionBytes)))
+		fmt.Printf("  caution: %s\n", humanize.IBytes(uint64(report.CautionBytes)))
 	}
 	if report.DangerBytes > 0 {
-		fmt.Printf("   ⛔ Use caution:      %s\n", humanize.IBytes(uint64(report.DangerBytes)))
+		fmt.Printf("  danger: %s\n", humanize.IBytes(uint64(report.DangerBytes)))
 	}
+	fmt.Println()
 
-	fmt.Print("\n   Top junk items:\n\n")
-
-	maxShow := 15
-	if len(report.Candidates) < maxShow {
-		maxShow = len(report.Candidates)
-	}
-
-	for i := 0; i < maxShow; i++ {
-		c := report.Candidates[i]
-		fmt.Printf("   %s %-50s %10s  %s\n",
-			c.Safety.Symbol(),
+	rows := make([][]string, len(report.Candidates))
+	for i, c := range report.Candidates {
+		rows[i] = []string{
+			colorizeSafety(c.Safety),
 			truncatePath(c.Path, 50),
-			humanize.IBytes(uint64(c.BytesAlloc)),
-			c.ReasonText)
+			colorizeSize(c.BytesAlloc),
+			c.ReasonText,
+		}
 	}
 
-	if len(report.Candidates) > maxShow {
-		fmt.Printf("\n   ... and %d more items\n", len(report.Candidates)-maxShow)
+	cfg := tableConfig{
+		Headers:  []string{"safety", "path", "size", "reason"},
+		Widths:   []int{12, 52, 10, 36},
+		Aligns:   []lipgloss.Position{lipgloss.Left, lipgloss.Left, lipgloss.Right, lipgloss.Left},
+		Page:     junkPage,
+		PageSize: junkPerPage,
 	}
-
-	fmt.Printf("\n💡 To clean up: cliverse disk junk %s --apply trash\n\n", report.RootPath)
-
+	fmt.Print(renderTable(cfg, rows))
+	fmt.Printf("\nTo clean up: cliverse disk junk %s --apply trash\n\n", report.RootPath)
 	return nil
 }

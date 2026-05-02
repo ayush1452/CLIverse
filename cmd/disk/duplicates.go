@@ -10,6 +10,7 @@ import (
 	"os"
 	"sort"
 
+	"github.com/charmbracelet/lipgloss"
 	"github.com/dustin/go-humanize"
 	"github.com/spf13/cobra"
 	"github.com/zeebo/blake3"
@@ -25,6 +26,8 @@ var (
 	dupesApply       string
 	dupesYes         bool
 	dupesVerifyBytes bool
+	dupesPage        int
+	dupesPerPage     int
 )
 
 func newDuplicatesCmd() *cobra.Command {
@@ -53,6 +56,8 @@ Examples:
 	cmd.Flags().StringVar(&dupesApply, "apply", "none", "Action: none, trash, delete")
 	cmd.Flags().BoolVar(&dupesYes, "yes", false, "Confirm destructive action")
 	cmd.Flags().BoolVar(&dupesVerifyBytes, "verify-bytes", false, "Byte-by-byte verify before action")
+	cmd.Flags().IntVar(&dupesPage, "page", 1, "Page number")
+	cmd.Flags().IntVar(&dupesPerPage, "per-page", 0, "Groups per page (0 = all)")
 
 	return cmd
 }
@@ -222,44 +227,46 @@ func applyKeepRule(nodes []*model.Node, rule string) int {
 
 func outputDuplicatesTable(report *model.DuplicateReport) error {
 	if len(report.Groups) == 0 {
-		fmt.Println("\n✅ No duplicate files found!")
+		fmt.Println("\nNo duplicate files found!")
 		return nil
 	}
 
-	fmt.Printf("\n🔁 Found %d duplicate groups (%s wasted)\n\n",
+	fmt.Printf("\nFound %d duplicate groups  wasted: %s\n\n",
 		report.TotalGroups,
 		humanize.IBytes(uint64(report.TotalWasteAlloc)))
 
-	// Show top groups
-	maxShow := 10
-	if len(report.Groups) < maxShow {
-		maxShow = len(report.Groups)
-	}
-
-	for i := 0; i < maxShow; i++ {
-		g := report.Groups[i]
-		fmt.Printf("   Group %d: %d files × %s = %s wasted\n",
-			i+1,
-			len(g.Files),
+	// Flatten groups into table rows
+	var rows [][]string
+	for i, g := range report.Groups {
+		groupHeader := fmt.Sprintf("Group %d  (%d files × %s = %s wasted)",
+			i+1, len(g.Files),
 			humanize.IBytes(uint64(g.SizeApp)),
 			humanize.IBytes(uint64(g.WasteAlloc)))
+		rows = append(rows, []string{"", groupHeader, "", ""})
 
 		for j, f := range g.Files {
-			marker := "  "
+			keep := " "
 			if j == g.KeepIndex {
-				marker = "✓ "
+				keep = "keep"
 			}
-			fmt.Printf("      %s%s\n", marker, truncatePath(f.Path, 70))
+			rows = append(rows, []string{
+				keep,
+				truncatePath(f.Path, 58),
+				colorizeSize(f.SizeAlloc),
+				f.MTime.Format("2006-01-02"),
+			})
 		}
-		fmt.Println()
 	}
 
-	if len(report.Groups) > maxShow {
-		fmt.Printf("   ... and %d more groups\n\n", len(report.Groups)-maxShow)
+	cfg := tableConfig{
+		Headers:  []string{"keep", "path", "size", "modified"},
+		Widths:   []int{4, 60, 10, 10},
+		Aligns:   []lipgloss.Position{lipgloss.Left, lipgloss.Left, lipgloss.Right, lipgloss.Left},
+		Page:     dupesPage,
+		PageSize: dupesPerPage,
 	}
-
-	fmt.Printf("💡 To clean up: cliverse disk duplicates %s --apply trash\n\n", report.RootPath)
-
+	fmt.Print(renderTable(cfg, rows))
+	fmt.Printf("\nTo clean up: cliverse disk duplicates %s --apply trash\n\n", report.RootPath)
 	return nil
 }
 
