@@ -13,18 +13,23 @@ import (
 
 // NewSysmonCmd returns the cobra command for the system monitor.
 func NewSysmonCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "sysmon",
 		Short: "Real-time system monitor (CPU, memory, disk I/O, network)",
-		Long: `sysmon opens an interactive full-screen system monitor.
+		Long: `sysmon opens an interactive full-screen system monitor (TUI by default).
 
-Keyboard shortcuts:
+Keyboard shortcuts (TUI):
   q / Ctrl+C   quit
   p            toggle process sort (CPU ↔ MEM)
   ↑ / k        move cursor up in process list
-  ↓ / j        move cursor down in process list`,
+  ↓ / j        move cursor down in process list
+
+Subcommands:
+  gui          open the browser-based live dashboard`,
 		RunE: runSysmon,
 	}
+	cmd.AddCommand(newSysmonGUICmd())
+	return cmd
 }
 
 func runSysmon(_ *cobra.Command, _ []string) error {
