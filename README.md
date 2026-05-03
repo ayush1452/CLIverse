@@ -7,6 +7,7 @@
 [![Go Version](https://img.shields.io/badge/Go-1.25+-00ADD8?style=flat&logo=go)](https://golang.org)
 [![Interface](https://img.shields.io/badge/Interface-CLI%20%7C%20TUI%20%7C%20GUI-0f172a?style=flat)](#interfaces)
 [![Platform](https://img.shields.io/badge/Platform-macOS%20%7C%20Linux%20%7C%20Windows-1f2937?style=flat)](#installation)
+[![CI/CD Pipeline](https://github.com/ayush1452/CLIverse/actions/workflows/ci.yml/badge.svg)](CI_CD.md)
 
 </div>
 
@@ -362,6 +363,10 @@ The project is designed to be cross-platform through Go and `gopsutil`, though t
 - the terminal supports full-screen TUI rendering
 - local browser opening is available
 - filesystem metadata is accessible without excessive permission restrictions
+
+## CI/CD
+
+The project uses a five-stage GitHub Actions pipeline. See [CI_CD.md](CI_CD.md) for the full breakdown with diagrams.
 
 ## Development
 

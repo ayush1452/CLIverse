@@ -1,0 +1,251 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [main, dev]
+    tags: ["v*.*.*"]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+env:
+  BINARY_NAME: cliverse
+  GO_VERSION_FILE: go.mod
+
+# ─────────────────────────────────────────────────────────────────────────────
+# STAGE 1 — Code Quality
+# ─────────────────────────────────────────────────────────────────────────────
+jobs:
+  quality:
+    name: Quality · ${{ matrix.check }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        check: [fmt, vet, lint, tidy]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Check formatting (gofmt)
+        if: matrix.check == 'fmt'
+        run: |
+          UNFORMATTED=$(gofmt -l .)
+          if [ -n "$UNFORMATTED" ]; then
+            echo "The following files need formatting:"
+            echo "$UNFORMATTED"
+            gofmt -d .
+            exit 1
+          fi
+
+      - name: Static analysis (go vet)
+        if: matrix.check == 'vet'
+        run: go vet ./...
+
+      - name: Lint (golangci-lint)
+        if: matrix.check == 'lint'
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+          args: --timeout=5m
+
+      - name: Module tidy check
+        if: matrix.check == 'tidy'
+        run: |
+          go mod tidy
+          if ! git diff --exit-code go.mod go.sum; then
+            echo "go.mod or go.sum is out of sync. Run 'go mod tidy' and commit."
+            exit 1
+          fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+# STAGE 2 — Security
+# ─────────────────────────────────────────────────────────────────────────────
+  security:
+    name: Security · ${{ matrix.scanner }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        scanner: [govulncheck, gosec]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Vulnerability scan (govulncheck)
+        if: matrix.scanner == 'govulncheck'
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
+
+      - name: SAST scan (gosec)
+        if: matrix.scanner == 'gosec'
+        uses: securego/gosec@master
+        with:
+          args: "-fmt sarif -out gosec.sarif ./..."
+
+      - name: Upload SARIF to GitHub Security tab
+        if: matrix.scanner == 'gosec' && always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: gosec.sarif
+
+# ─────────────────────────────────────────────────────────────────────────────
+# STAGE 3 — Test (multi-OS, with coverage)
+# ─────────────────────────────────────────────────────────────────────────────
+  test:
+    name: Test · ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run tests with race detector
+        run: go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
+
+      - name: Upload coverage to Codecov
+        if: matrix.os == 'ubuntu-latest'
+        uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: coverage.out
+          flags: unittests
+          name: cliverse-coverage
+          fail_ci_if_error: true
+          verbose: true
+
+      - name: Upload coverage artifact
+        if: matrix.os == 'ubuntu-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage.out
+          retention-days: 7
+
+# ─────────────────────────────────────────────────────────────────────────────
+# STAGE 4 — Build (multi-platform, after quality + test pass)
+# ─────────────────────────────────────────────────────────────────────────────
+  build:
+    name: Build · ${{ matrix.goos }}/${{ matrix.goarch }}
+    runs-on: ubuntu-latest
+    needs: [quality, test]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {goos: linux,   goarch: amd64}
+          - {goos: linux,   goarch: arm64}
+          - {goos: darwin,  goarch: amd64}
+          - {goos: darwin,  goarch: arm64}
+          - {goos: windows, goarch: amd64}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Compute build metadata
+        id: meta
+        run: |
+          VERSION="${GITHUB_REF_NAME:-dev}"
+          COMMIT="${GITHUB_SHA::8}"
+          DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          echo "version=$VERSION"  >> "$GITHUB_OUTPUT"
+          echo "commit=$COMMIT"    >> "$GITHUB_OUTPUT"
+          echo "date=$DATE"        >> "$GITHUB_OUTPUT"
+
+      - name: Build binary
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "0"
+        run: |
+          EXT=""
+          [ "${{ matrix.goos }}" = "windows" ] && EXT=".exe"
+          OUT="dist/${{ env.BINARY_NAME }}-${{ matrix.goos }}-${{ matrix.goarch }}${EXT}"
+          go build \
+            -trimpath \
+            -ldflags="-s -w \
+              -X main.version=${{ steps.meta.outputs.version }} \
+              -X main.commit=${{ steps.meta.outputs.commit }} \
+              -X main.date=${{ steps.meta.outputs.date }}" \
+            -o "$OUT" .
+          echo "Built: $OUT"
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.BINARY_NAME }}-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/
+          retention-days: 7
+
+# ─────────────────────────────────────────────────────────────────────────────
+# STAGE 5 — Release (tags only, after build + security pass)
+# ─────────────────────────────────────────────────────────────────────────────
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    needs: [build, security]
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: ${{ env.BINARY_NAME }}-*
+          path: dist/
+          merge-multiple: true
+
+      - name: Generate SHA-256 checksums
+        run: |
+          cd dist
+          sha256sum * > checksums.txt
+          cat checksums.txt
+
+      - name: Determine pre-release
+        id: prerelease
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          if echo "$TAG" | grep -qE '\-(alpha|beta|rc)'; then
+            echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "${{ env.BINARY_NAME }} ${{ github.ref_name }}"
+          files: dist/*
+          generate_release_notes: true
+          draft: false
+          prerelease: ${{ steps.prerelease.outputs.is_prerelease }}
+          fail_on_unmatched_files: true
