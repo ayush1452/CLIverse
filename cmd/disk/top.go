@@ -6,11 +6,17 @@ import (
 	"os"
 	"sort"
 
+	"github.com/charmbracelet/lipgloss"
 	"github.com/dustin/go-humanize"
 	"github.com/spf13/cobra"
 
 	"github.com/ayush1452/CLIverse/core/model"
 	"github.com/ayush1452/CLIverse/core/scan"
+)
+
+var (
+	topPage    int
+	topPerPage int
 )
 
 var (
@@ -35,6 +41,8 @@ Examples:
 
 	cmd.Flags().BoolVar(&topShowFiles, "files", false, "Show top files instead of directories")
 	cmd.Flags().BoolVar(&topShowAll, "all", false, "Show both files and directories")
+	cmd.Flags().IntVar(&topPage, "page", 1, "Page number")
+	cmd.Flags().IntVar(&topPerPage, "per-page", 0, "Rows per page (0 = all)")
 
 	return cmd
 }
@@ -111,35 +119,46 @@ func outputTopTable(s *model.Scan, files, all bool) error {
 		items = items[:topN]
 	}
 
-	// Print header
-	title := "directories"
+	kind := "directories"
 	if files {
-		title = "files"
+		kind = "files"
 	} else if all {
-		title = "items"
+		kind = "items"
 	}
-	fmt.Printf("\n📊 Top %d %s in %s:\n\n", len(items), title, s.RootPath)
 
 	totalSize := root.Stats.TotalAlloc
 
+	rows := make([][]string, len(items))
 	for i, node := range items {
 		size := node.Size(s.Opts.SizeMode)
-		pct := float64(size) / float64(totalSize) * 100
-
-		icon := "📁"
-		if node.Kind == model.KindFile {
-			icon = "📄"
+		pct := float64(0)
+		if totalSize > 0 {
+			pct = float64(size) / float64(totalSize) * 100
 		}
-
-		path := relativePath(s.RootPath, node.Path)
-		fmt.Printf("   %2d. %s %-48s %10s  (%.1f%%)\n",
-			i+1,
+		icon := "dir"
+		if node.Kind == model.KindFile {
+			icon = "file"
+		}
+		path := truncatePath(relativePath(s.RootPath, node.Path), 52)
+		rows[i] = []string{
+			fmt.Sprintf("%d", i+1),
 			icon,
-			truncatePath(path, 48),
-			humanize.IBytes(uint64(size)),
-			pct)
+			path,
+			colorizeSize(size),
+			fmt.Sprintf("%.1f%%", pct),
+		}
 	}
 
+	cfg := tableConfig{
+		Title:    fmt.Sprintf("Top %d %s in %s", len(items), kind, s.RootPath),
+		Headers:  []string{"#", "type", "path", "size", "share"},
+		Widths:   []int{3, 4, 54, 10, 7},
+		Aligns:   []lipgloss.Position{lipgloss.Right, lipgloss.Left, lipgloss.Left, lipgloss.Right, lipgloss.Right},
+		Page:     topPage,
+		PageSize: topPerPage,
+	}
+	fmt.Println()
+	fmt.Print(renderTable(cfg, rows))
 	fmt.Println()
 	return nil
 }

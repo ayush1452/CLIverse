@@ -57,6 +57,7 @@ Examples:
   cliverse disk /var --top 20      # Top 20 directories in /var
   cliverse disk . --json           # JSON output for scripting
   cliverse disk tui .              # Interactive TUI mode
+  cliverse disk gui .              # Browser dashboard
   cliverse disk duplicates .       # Find duplicate files
   cliverse disk junk .             # Find junk/cache directories`,
 		Args: cobra.MaximumNArgs(1),
@@ -94,6 +95,7 @@ Examples:
 	cmd.AddCommand(newTopCmd())
 	cmd.AddCommand(newTUICmd())
 	cmd.AddCommand(newOverviewCmd())
+	cmd.AddCommand(newGUICmd())
 	cmd.AddCommand(newDuplicatesCmd())
 	cmd.AddCommand(newJunkCmd())
 	cmd.AddCommand(newCacheCmd())
@@ -248,6 +250,7 @@ func outputSummary(scan *model.Scan, overview *model.Overview) error {
 
 	// Quick insights
 	fmt.Printf("\n💡 Quick actions:\n")
+	fmt.Printf("   cliverse disk gui %s        # Browser dashboard\n", scan.RootPath)
 	fmt.Printf("   cliverse disk tui %s        # Interactive browser\n", scan.RootPath)
 	fmt.Printf("   cliverse disk duplicates %s # Find duplicates\n", scan.RootPath)
 	fmt.Printf("   cliverse disk junk %s       # Find cleanable junk\n\n", scan.RootPath)

@@ -33,6 +33,11 @@ type Theme struct {
 	Border     lipgloss.Style
 	Panel      lipgloss.Style
 	PanelTitle lipgloss.Style
+
+	// Layout bar styles
+	HeaderBar  lipgloss.Style
+	CommandBar lipgloss.Style
+	DialogBox  lipgloss.Style
 }
 
 // Dark is the default dark theme.
@@ -171,6 +176,20 @@ func (t Theme) Init() Theme {
 	t.PanelTitle = lipgloss.NewStyle().
 		Bold(true).
 		Foreground(t.Highlight)
+
+	t.HeaderBar = lipgloss.NewStyle().
+		Bold(true).
+		Background(t.Background).
+		Foreground(t.Foreground)
+
+	t.CommandBar = lipgloss.NewStyle().
+		Background(t.Background).
+		Foreground(t.Subtle)
+
+	t.DialogBox = lipgloss.NewStyle().
+		BorderStyle(lipgloss.RoundedBorder()).
+		BorderForeground(t.Warning).
+		Padding(1, 2)
 
 	return t
 }

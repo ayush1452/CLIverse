@@ -1,16 +1,11 @@
 package disk
 
 import (
-	"context"
 	"fmt"
-	"os"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
 
-	"github.com/ayush1452/CLIverse/core/model"
-	"github.com/ayush1452/CLIverse/core/scan"
-	"github.com/ayush1452/CLIverse/core/store"
 	"github.com/ayush1452/CLIverse/tui/app"
 )
 
@@ -28,10 +23,11 @@ func newTUICmd() *cobra.Command {
 
 The TUI provides:
   - Tree view for navigating directories
-  - Overview with category breakdown and charts
+  - Overview with category breakdown and hotspot triage
   - Duplicate file detection
   - Junk/cache cleanup recommendations
   - Safe multi-select deletion with staging
+  - A companion browser dashboard via 'cliverse disk gui'
 
 Examples:
   cliverse disk tui .              # Browse current directory
@@ -74,32 +70,9 @@ func runTUI(cmd *cobra.Command, args []string) error {
 		path = args[0]
 	}
 
-	// Load or Scan
-	var result *model.Scan
-	var err error
-
-	if importFile != "" {
-		result, err = store.LoadScan(importFile)
-		if err != nil {
-			return fmt.Errorf("load failed: %w", err)
-		}
-		fmt.Fprintf(os.Stderr, "Loaded scan of %s (%d nodes)\n", result.RootPath, result.Stats.Nodes)
-	} else {
-		// Perform initial scan
-		opts := buildScanOptions()
-		scanner := scan.New(opts)
-
-		fmt.Fprintf(os.Stderr, "Scanning %s...\n", path)
-
-		result, err = scanner.Scan(context.Background(), path, func(p model.ScanProgress) {
-			fmt.Fprintf(os.Stderr, "\rScanning: %d nodes, %d errors...", p.NodesScanned, p.ErrorCount)
-		})
-		if err != nil {
-			return fmt.Errorf("scan failed: %w", err)
-		}
-
-		fmt.Fprintf(os.Stderr, "\rScan complete: %d nodes in %s\n",
-			result.Stats.Nodes, result.Stats.Elapsed.Round(1e6))
+	result, err := loadDiskScan(path)
+	if err != nil {
+		return err
 	}
 
 	// Create and run TUI

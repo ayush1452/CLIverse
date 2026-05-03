@@ -2,13 +2,16 @@
 package app
 
 import (
+	"fmt"
+	"sort"
+	"strings"
+
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/ayush1452/CLIverse/core/classify"
 	"github.com/ayush1452/CLIverse/core/model"
 	"github.com/ayush1452/CLIverse/tui/theme"
-	"github.com/ayush1452/CLIverse/tui/widgets"
 )
 
 // ViewType represents the current view/screen.
@@ -21,6 +24,29 @@ const (
 	ViewJunk
 	ViewHelp
 )
+
+// SortField controls how tree children are ordered.
+type SortField uint8
+
+const (
+	SortBySize  SortField = iota // default: largest first
+	SortByName                   // alphabetical
+	SortByMtime                  // newest first
+	SortByCount                  // most files first
+)
+
+func (s SortField) String() string {
+	switch s {
+	case SortByName:
+		return "name↑"
+	case SortByMtime:
+		return "mtime↓"
+	case SortByCount:
+		return "count↓"
+	default:
+		return "size↓"
+	}
+}
 
 // Options configures the TUI application.
 type Options struct {
@@ -59,8 +85,23 @@ type Model struct {
 	// Modals
 	showHelp bool
 
+	// File operation dialog
+	showDialog   bool
+	dialogMsg    string
+	dialogAction func() tea.Cmd
+	dialogTarget *model.Node
+
+	// Search / filter
+	searchMode  bool
+	searchQuery string
+
+	// Sort
+	sortField SortField
+	sortAsc   bool
+
 	// Messages
 	statusMsg string
+	opResult  string
 }
 
 // New creates a new TUI model.
@@ -110,18 +151,69 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		return m.handleKey(msg)
+
+	case opResultMsg:
+		m.statusMsg = msg.message
+		if msg.success && msg.deletedID != 0 {
+			deleted := m.scan.GetNode(msg.deletedID)
+			if deleted != nil {
+				parent := m.scan.GetNode(deleted.Parent)
+				if parent != nil {
+					newChildren := make([]model.NodeID, 0, len(parent.Children))
+					for _, cid := range parent.Children {
+						if cid != msg.deletedID {
+							newChildren = append(newChildren, cid)
+						}
+					}
+					parent.Children = newChildren
+				}
+				delete(m.scan.Nodes, msg.deletedID)
+			}
+			m.rebuildFlatTree()
+			if m.treeCursor >= len(m.treeFlat) {
+				m.treeCursor = maxInt(0, len(m.treeFlat)-1)
+			}
+		}
+		return m, nil
 	}
 
 	return m, nil
 }
 
 func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Dialog intercepts all keys
+	if m.showDialog {
+		return m.handleDialogKey(msg)
+	}
+
+	// Search mode intercepts all keys
+	if m.searchMode {
+		return m.handleSearchKey(msg)
+	}
+
 	// Global keys
 	switch msg.String() {
 	case "q", "ctrl+c":
 		return m, tea.Quit
 	case "?":
 		m.showHelp = !m.showHelp
+		return m, nil
+	case "tab":
+		if m.currentView == ViewTree {
+			m.currentView = ViewOverview
+			m.statusMsg = "Overview view"
+		} else {
+			m.currentView = ViewTree
+			m.statusMsg = "Explorer view"
+		}
+		return m, nil
+	case "t":
+		m.currentView = ViewTree
+		m.statusMsg = "Explorer view"
+		return m, nil
+	case "o", "O":
+		m.currentView = ViewOverview
+		m.statusMsg = "Overview view"
 		return m, nil
 	case "esc":
 		if m.showHelp {
@@ -143,6 +235,53 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleOverviewKey(msg)
 	}
 
+	return m, nil
+}
+
+func (m *Model) handleDialogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "y", "Y":
+		action := m.dialogAction
+		m.showDialog = false
+		m.dialogTarget = nil
+		m.dialogMsg = ""
+		m.dialogAction = nil
+		if action != nil {
+			return m, action()
+		}
+	case "n", "N", "esc":
+		m.showDialog = false
+		m.dialogTarget = nil
+		m.dialogMsg = ""
+		m.dialogAction = nil
+		m.statusMsg = "Cancelled"
+	}
+	return m, nil
+}
+
+func (m *Model) handleSearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	key := msg.String()
+	switch key {
+	case "esc":
+		m.searchMode = false
+		m.searchQuery = ""
+		m.rebuildFlatTree()
+		m.statusMsg = "Search cleared"
+	case "enter":
+		m.searchMode = false
+		m.statusMsg = fmt.Sprintf("Showing %d matches for %q", len(m.treeFlat), m.searchQuery)
+	case "backspace":
+		if len(m.searchQuery) > 0 {
+			m.searchQuery = m.searchQuery[:len(m.searchQuery)-1]
+			m.rebuildFlatTree()
+		}
+	default:
+		// Accept printable single characters
+		if len(key) == 1 {
+			m.searchQuery += key
+			m.rebuildFlatTree()
+		}
+	}
 	return m, nil
 }
 
@@ -204,6 +343,44 @@ func (m *Model) handleTreeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.treeCursor = 0
 	case "G":
 		m.treeCursor = len(m.treeFlat) - 1
+
+	case "y":
+		if node := m.selectedNode(); node != nil {
+			m.statusMsg = "Copying path..."
+			return m, cmdCopyPath(node.Path)
+		}
+
+	case "D":
+		if node := m.selectedNode(); node != nil {
+			m.showDialog = true
+			m.dialogTarget = node
+			m.dialogMsg = fmt.Sprintf("Delete %s?\n%s\n\nThis cannot be undone.", node.Kind.String(), truncatePath(node.Path, 54))
+			nodeID := node.ID
+			isDir := node.IsDir()
+			path := node.Path
+			m.dialogAction = func() tea.Cmd {
+				return cmdDeleteNode(path, nodeID, isDir)
+			}
+		}
+		return m, nil
+
+	case "e":
+		if node := m.selectedNode(); node != nil {
+			return m, cmdRevealInFinder(node.Path)
+		}
+
+	case "ctrl+o":
+		return m, cmdOpenGUI(m.scan.RootPath)
+
+	case "s":
+		m.sortField = (m.sortField + 1) % 4
+		m.rebuildFlatTree()
+		m.statusMsg = "Sort: " + m.sortField.String()
+
+	case "/":
+		m.searchMode = true
+		m.searchQuery = ""
+		m.statusMsg = "Search mode — type to filter"
 	}
 
 	return m, nil
@@ -241,615 +418,716 @@ func (m Model) View() string {
 		return "Loading..."
 	}
 
-	var content string
+	var body string
 	switch m.currentView {
-	case ViewTree:
-		content = m.renderTreeView()
 	case ViewOverview:
-		content = m.renderOverviewView()
+		body = m.renderOverviewView()
 	default:
-		content = m.renderTreeView()
+		body = m.renderTreeView()
 	}
 
-	// Add help overlay
+	content := lipgloss.JoinVertical(
+		lipgloss.Left,
+		m.renderHeaderBar(),
+		m.renderContextBar(),
+		body,
+		m.renderStatusBar(),
+		m.renderCommandBar(),
+	)
+
+	if m.showDialog {
+		return m.renderDialog(content)
+	}
 	if m.showHelp {
-		content = m.renderHelpOverlay(content)
+		return m.renderHelpOverlay(content)
 	}
-
 	return content
 }
 
 func (m *Model) rebuildFlatTree() {
 	m.treeFlat = m.treeFlat[:0]
-	m.flattenNode(m.scan.RootID, 0)
+	m.flattenNode(m.scan.RootID)
+
+	// Apply search filter when query is long enough
+	if m.searchMode && len(m.searchQuery) >= 2 {
+		query := strings.ToLower(m.searchQuery)
+		filtered := m.treeFlat[:0]
+		for _, node := range m.treeFlat {
+			if strings.Contains(strings.ToLower(node.Name), query) ||
+				strings.Contains(strings.ToLower(node.Path), query) {
+				filtered = append(filtered, node)
+			}
+		}
+		m.treeFlat = filtered
+		if m.treeCursor >= len(m.treeFlat) {
+			m.treeCursor = maxInt(0, len(m.treeFlat)-1)
+		}
+	}
 }
 
-func (m *Model) flattenNode(id model.NodeID, depth int) {
+func (m *Model) flattenNode(id model.NodeID) {
 	node := m.scan.GetNode(id)
 	if node == nil {
 		return
 	}
 
 	m.treeFlat = append(m.treeFlat, node)
+	if !node.IsDir() || !m.treeExpanded[id] {
+		return
+	}
 
-	if node.Kind == model.KindDir && m.treeExpanded[id] {
-		for _, childID := range node.Children {
-			childNode := m.scan.GetNode(childID)
-			if childNode != nil {
-				m.flattenNode(childID, depth+1)
+	// Sort children according to current sort field
+	children := make([]model.NodeID, len(node.Children))
+	copy(children, node.Children)
+	sort.Slice(children, func(i, j int) bool {
+		a, b := m.scan.GetNode(children[i]), m.scan.GetNode(children[j])
+		if a == nil || b == nil {
+			return false
+		}
+		switch m.sortField {
+		case SortByName:
+			if m.sortAsc {
+				return a.Name < b.Name
 			}
+			return a.Name > b.Name
+		case SortByMtime:
+			if m.sortAsc {
+				return a.Meta.MTime.Before(b.Meta.MTime)
+			}
+			return a.Meta.MTime.After(b.Meta.MTime)
+		case SortByCount:
+			if m.sortAsc {
+				return a.Stats.FileCount < b.Stats.FileCount
+			}
+			return a.Stats.FileCount > b.Stats.FileCount
+		default: // SortBySize descending
+			return a.Size(m.sizeMode) > b.Size(m.sizeMode)
+		}
+	})
+
+	for _, childID := range children {
+		if m.scan.GetNode(childID) != nil {
+			m.flattenNode(childID)
 		}
 	}
 }
 
-func (m Model) renderTreeView() string {
-	// Header
-	header := lipgloss.JoinVertical(lipgloss.Left,
-		m.theme.Title.Render("📁 "+m.scan.RootPath),
-		m.theme.Subtitle.Render(m.getTreeStats()),
+func (m Model) renderHeaderBar() string {
+	logo := lipgloss.NewStyle().Bold(true).Foreground(m.theme.Highlight).Render("CLIverse Disk")
+	sep := lipgloss.NewStyle().Foreground(m.theme.Subtle).Render("  │  ")
+	path := lipgloss.NewStyle().Foreground(m.theme.Subtle).Render(truncatePath(m.scan.RootPath, maxInt(28, m.width/2-30)))
+
+	tabs := lipgloss.JoinHorizontal(lipgloss.Left,
+		m.renderTab("Explorer", m.currentView == ViewTree),
+		" ",
+		m.renderTab("Overview", m.currentView == ViewOverview),
 	)
 
-	// Tree content
-	treeContent := m.renderTree()
+	sortChip := lipgloss.NewStyle().
+		Foreground(m.theme.Success).
+		Render(" sort:" + m.sortField.String())
 
-	// Details panel
-	details := m.renderDetails()
+	left := logo + sep + path
+	right := tabs + sortChip
 
-	// Help bar
-	help := m.theme.Help.Render("↑↓ navigate • Enter expand • x mark • a size mode • O overview • ? help • q quit")
-
-	// Layout
-	mainWidth := m.width - 40
-	if mainWidth < 40 {
-		mainWidth = m.width
-	}
-
-	leftPanel := lipgloss.NewStyle().
-		Width(mainWidth).
-		Height(m.height - 5).
-		Render(treeContent)
-
-	rightPanel := lipgloss.NewStyle().
-		Width(38).
-		Height(m.height - 5).
-		Render(details)
-
-	main := lipgloss.JoinHorizontal(lipgloss.Top, leftPanel, rightPanel)
-
-	return lipgloss.JoinVertical(lipgloss.Left,
-		header,
-		"",
-		main,
-		"",
-		help,
-	)
+	pad := maxInt(1, m.width-lipgloss.Width(left)-lipgloss.Width(right))
+	line := left + strings.Repeat(" ", pad) + right
+	return m.theme.HeaderBar.Width(m.width).Render(line)
 }
 
-func (m Model) getTreeStats() string {
+func (m Model) renderContextBar() string {
 	root := m.scan.Root()
-	if root == nil {
-		return ""
+	scanned := "0 B"
+	if root != nil {
+		scanned = m.formatSize(root.Size(m.sizeMode))
 	}
-	return lipgloss.NewStyle().Foreground(m.theme.Subtle).Render(
-		m.formatSize(root.Stats.TotalAlloc) + " • " +
-			m.formatCount(m.scan.Stats.Files) + " files • " +
-			m.formatCount(m.scan.Stats.Dirs) + " dirs",
-	)
+
+	stats := []string{
+		m.renderStatChip("Scanned", scanned),
+		m.renderStatChip("Files", m.formatCount(m.scan.Stats.Files)),
+		m.renderStatChip("Dirs", m.formatCount(m.scan.Stats.Dirs)),
+		m.renderStatChip("Mode", m.sizeMode.String()),
+	}
+	if m.scan.Stats.Errors > 0 {
+		stats = append(stats, m.renderStatChip("Errors", m.formatCount(m.scan.Stats.Errors)))
+	}
+	return lipgloss.JoinHorizontal(lipgloss.Left, stats...)
 }
 
-func (m Model) renderTree() string {
+func (m Model) renderTab(label string, active bool) string {
+	style := lipgloss.NewStyle().
+		Padding(0, 1).
+		Border(lipgloss.NormalBorder()).
+		BorderForeground(m.theme.Subtle).
+		Foreground(m.theme.Subtle)
+	if active {
+		style = style.
+			BorderForeground(m.theme.Highlight).
+			Foreground(m.theme.Foreground).
+			Bold(true)
+	}
+	return style.Render(label)
+}
+
+func (m Model) renderStatChip(label, value string) string {
+	return lipgloss.NewStyle().
+		Padding(0, 1).
+		MarginRight(1).
+		Border(lipgloss.NormalBorder()).
+		BorderForeground(m.theme.Subtle).
+		Render(
+			lipgloss.NewStyle().Foreground(m.theme.Subtle).Render(strings.ToUpper(label)) +
+				" " +
+				lipgloss.NewStyle().Bold(true).Foreground(m.theme.Foreground).Render(value),
+		)
+}
+
+func (m Model) renderStatusBar() string {
+	nodeCount := lipgloss.NewStyle().Foreground(m.theme.Foreground).Render(fmt.Sprintf("%d nodes", len(m.treeFlat)))
+	marked := lipgloss.NewStyle().Foreground(m.theme.Warning).Render(fmt.Sprintf("%d marked", len(m.treeMarked)))
+	sep := lipgloss.NewStyle().Foreground(m.theme.Subtle).Render("  │  ")
+
+	pos := ""
+	scrollPct := ""
+	if len(m.treeFlat) > 0 {
+		pos = fmt.Sprintf("%d/%d", m.treeCursor+1, len(m.treeFlat))
+		pct := int(float64(m.treeCursor) / float64(maxInt(1, len(m.treeFlat)-1)) * 100)
+		scrollPct = fmt.Sprintf("%d%%", pct)
+	}
+	posStr := lipgloss.NewStyle().Foreground(m.theme.Subtle).Render(pos + "  " + scrollPct)
+
+	msg := m.statusMsg
+	if msg == "" {
+		if node := m.selectedNode(); node != nil {
+			msg = truncatePath(node.Path, maxInt(24, m.width/2))
+		} else {
+			msg = "Ready"
+		}
+	}
+	msgStr := lipgloss.NewStyle().Foreground(m.theme.Subtle).Render(msg)
+
+	left := nodeCount + sep + marked + sep + msgStr
+	right := posStr
+	pad := maxInt(1, m.width-lipgloss.Width(left)-lipgloss.Width(right))
+	return left + strings.Repeat(" ", pad) + right
+}
+
+func (m Model) renderCommandBar() string {
+	if m.searchMode {
+		return m.renderSearchBox()
+	}
+
+	type hint struct{ key, action string }
+	var hints []hint
+
+	if m.showDialog {
+		hints = []hint{{"y", "confirm"}, {"N", "cancel"}}
+	} else if m.currentView == ViewOverview {
+		hints = []hint{{"j/k", "navigate"}, {"enter", "drill"}, {"tab", "tree"}, {"?", "help"}, {"q", "quit"}}
+	} else {
+		hints = []hint{
+			{"enter", "expand"}, {"x", "mark"}, {"y", "copy path"},
+			{"D", "delete"}, {"e", "reveal"}, {"/", "search"},
+			{"s", "sort"}, {"a", "size"}, {"?", "help"}, {"q", "quit"},
+		}
+	}
+
+	keyStyle := lipgloss.NewStyle().Foreground(m.theme.Highlight).Bold(true)
+	actStyle := lipgloss.NewStyle().Foreground(m.theme.Foreground)
+	sepStyle := lipgloss.NewStyle().Foreground(m.theme.Subtle)
+
+	parts := make([]string, 0, len(hints))
+	for _, h := range hints {
+		parts = append(parts, keyStyle.Render("<"+h.key+">")+actStyle.Render(" "+h.action))
+	}
+	line := strings.Join(parts, sepStyle.Render("  │  "))
+
+	pad := maxInt(0, m.width-lipgloss.Width(line))
+	return m.theme.CommandBar.Width(m.width).Render(line + strings.Repeat(" ", pad))
+}
+
+func (m Model) renderTreeView() string {
+	leftWidth := int(float64(m.width) * 0.62)
+	if leftWidth < 56 {
+		leftWidth = m.width
+	}
+	rightWidth := m.width - leftWidth - 2
+	if rightWidth < 34 {
+		rightWidth = 34
+	}
+
+	explorer := m.renderPanel(
+		"Explorer",
+		fmt.Sprintf("%d visible nodes / cursor %d", len(m.treeFlat), m.treeCursor+1),
+		m.renderTreeRows(leftWidth-4),
+		leftWidth,
+	)
+
+	inspector := m.renderPanel(
+		"Inspector",
+		"Selected path, contribution, and child pressure",
+		m.renderDetails(rightWidth-4),
+		rightWidth,
+	)
+
+	if m.width < 116 {
+		return lipgloss.JoinVertical(lipgloss.Left, explorer, "", inspector)
+	}
+	return lipgloss.JoinHorizontal(lipgloss.Top, explorer, "  ", inspector)
+}
+
+func (m Model) renderPanel(title, subtitle, content string, width int) string {
+	header := lipgloss.JoinVertical(
+		lipgloss.Left,
+		lipgloss.NewStyle().Bold(true).Foreground(m.theme.Foreground).Render(title),
+		lipgloss.NewStyle().Foreground(m.theme.Subtle).Render(subtitle),
+	)
+
+	body := lipgloss.JoinVertical(lipgloss.Left, header, "", content)
+	return lipgloss.NewStyle().
+		Width(width).
+		Padding(1, 1).
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(m.theme.Subtle).
+		Render(body)
+}
+
+func (m Model) renderTreeRows(panelWidth int) string {
 	if len(m.treeFlat) == 0 {
-		return "Empty"
+		return m.theme.Subtitle.Render("No nodes available.")
 	}
 
-	// Calculate visible range
-	visibleHeight := m.height - 8
-	if visibleHeight < 5 {
-		visibleHeight = 5
-	}
-
+	visibleHeight := maxInt(8, m.height-10)
 	startIdx := 0
 	if m.treeCursor >= visibleHeight {
 		startIdx = m.treeCursor - visibleHeight + 1
 	}
-	endIdx := startIdx + visibleHeight
-	if endIdx > len(m.treeFlat) {
-		endIdx = len(m.treeFlat)
-	}
+	endIdx := minInt(len(m.treeFlat), startIdx+visibleHeight)
 
-	var lines []string
+	lines := make([]string, 0, endIdx-startIdx)
 	for i := startIdx; i < endIdx; i++ {
-		node := m.treeFlat[i]
-		lines = append(lines, m.renderTreeLine(node, i == m.treeCursor))
+		lines = append(lines, m.renderTreeLine(m.treeFlat[i], i == m.treeCursor, panelWidth))
 	}
-
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)
 }
 
-func (m Model) renderTreeLine(node *model.Node, selected bool) string {
-	// Calculate available width for the tree panel
-	treeWidth := m.width - 42 // Leave room for details panel
-	if treeWidth < 40 {
-		treeWidth = 40
+func (m Model) renderTreeLine(node *model.Node, selected bool, panelWidth int) string {
+	root := m.scan.Root()
+	rootSize := int64(0)
+	if root != nil {
+		rootSize = root.Size(m.sizeMode)
 	}
 
-	// Indent based on depth
-	indent := ""
-	for i := 0; i < int(node.Depth); i++ {
-		indent += "  "
+	pct := 0.0
+	if rootSize > 0 {
+		pct = float64(node.Size(m.sizeMode)) / float64(rootSize) * 100
 	}
 
-	// Icon
-	icon := "📄"
-	if node.Kind == model.KindDir {
+	indent := strings.Repeat("  ", int(node.Depth))
+	glyph := "•"
+	if node.IsDir() {
 		if m.treeExpanded[node.ID] {
-			icon = "📂"
+			glyph = "▾"
 		} else {
-			icon = "📁"
-		}
-	}
-	if !m.showIcons {
-		if node.Kind == model.KindDir {
-			icon = "/"
-		} else {
-			icon = " "
+			glyph = "▸"
 		}
 	}
 
-	// Mark indicator
 	mark := " "
 	if m.treeMarked[node.ID] {
-		mark = "•"
+		mark = "●"
 	}
 
-	// Size and percentage
-	size := m.formatSize(node.Size(m.sizeMode))
-	pctStr := ""
-	root := m.scan.Root()
-	if root != nil && root.Stats.TotalAlloc > 0 {
-		p := float64(node.Size(m.sizeMode)) / float64(root.Stats.TotalAlloc) * 100
-		if p >= 0.1 {
-			pctStr = m.formatPercent(p)
-		}
-	}
+	bar := renderMeter(pct, 8, m.nodeColor(node), m.theme.Subtle)
+	size := lipgloss.NewStyle().Foreground(m.theme.Foreground).Render(m.formatSize(node.Size(m.sizeMode)))
+	pctStr := lipgloss.NewStyle().Foreground(m.theme.Subtle).Render(fmt.Sprintf("%5.1f%%", pct))
 
-	// Calculate name width (leave space for size + pct)
-	sizeWidth := 16                // "  8.0 KB 12.5%"
-	indentWidth := len(indent) + 4 // indent + mark + icon + space
-	nameWidth := treeWidth - indentWidth - sizeWidth
-	if nameWidth < 10 {
-		nameWidth = 10
-	}
+	nameWidth := maxInt(12, panelWidth-34-int(node.Depth)*2)
+	name := truncate(node.Name, nameWidth)
+	line := fmt.Sprintf("%s%s %s %-*s  %s  %s  %s", indent, mark, glyph, nameWidth, name, bar, size, pctStr)
 
-	// Truncate name if needed
-	name := node.Name
-	if len(name) > nameWidth {
-		name = name[:nameWidth-3] + "..."
-	}
-
-	// Build the line with fixed-width columns
-	nameCol := lipgloss.NewStyle().Width(nameWidth).Render(name)
-	sizeCol := lipgloss.NewStyle().Width(10).Align(lipgloss.Right).Render(size)
-	pctCol := lipgloss.NewStyle().Width(6).Align(lipgloss.Right).Foreground(m.theme.Subtle).Render(pctStr)
-
-	line := indent + mark + icon + " " + nameCol + sizeCol + pctCol
-
-	// Apply selection/mark styling
-	lineStyle := lipgloss.NewStyle().Width(treeWidth)
-	if selected {
-		return lineStyle.Background(m.theme.Highlight).Foreground(m.theme.Background).Bold(true).Render(line)
+	style := lipgloss.NewStyle().Width(panelWidth).Foreground(m.nodeColor(node))
+	if node.Kind == model.KindFile {
+		style = style.Foreground(m.theme.Foreground)
 	}
 	if m.treeMarked[node.ID] {
-		return lineStyle.Foreground(m.theme.Warning).Bold(true).Render(line)
+		style = style.Foreground(m.theme.Warning).Bold(true)
 	}
-	if node.Kind == model.KindDir {
-		return lineStyle.Foreground(m.theme.Highlight).Bold(true).Render(line)
+	if selected {
+		style = style.Background(m.theme.Highlight).Foreground(m.theme.Background).Bold(true)
 	}
-	return lineStyle.Foreground(m.theme.Foreground).Render(line)
+	return style.Render(line)
 }
 
-func (m Model) renderDetails() string {
-	if m.treeCursor >= len(m.treeFlat) {
-		return ""
+func (m Model) renderDetails(panelWidth int) string {
+	node := m.selectedNode()
+	if node == nil {
+		return m.theme.Subtitle.Render("Nothing selected.")
 	}
 
-	node := m.treeFlat[m.treeCursor]
-
-	title := m.theme.PanelTitle.Render("Details")
-
-	details := []string{
-		title,
-		"",
-		"Name: " + node.Name,
-		"Path: " + truncatePath(node.Path, 30),
-		"Kind: " + node.Kind.String(),
-		"",
-		"Allocated: " + m.formatSize(node.Stats.SizeAlloc),
-		"Apparent:  " + m.formatSize(node.Stats.SizeApp),
+	root := m.scan.Root()
+	rootSize := int64(0)
+	if root != nil {
+		rootSize = root.Size(m.sizeMode)
+	}
+	share := 0.0
+	if rootSize > 0 {
+		share = float64(node.Size(m.sizeMode)) / float64(rootSize) * 100
 	}
 
-	if node.Kind == model.KindDir {
-		details = append(details,
-			"",
-			"Total:     "+m.formatSize(node.Stats.TotalAlloc),
-			"Files:     "+m.formatCount(node.Stats.FileCount),
-			"Dirs:      "+m.formatCount(node.Stats.DirCount),
+	lines := []string{
+		m.renderKeyValue("Name", node.Name),
+		m.renderKeyValue("Kind", node.Kind.String()),
+		m.renderKeyValue("Path", truncatePath(node.Path, maxInt(20, panelWidth-8))),
+		m.renderKeyValue("Share", fmt.Sprintf("%s of scan", m.formatPercent(share))),
+		m.renderKeyValue("Selected", m.formatSize(node.Size(m.sizeMode))),
+		m.renderKeyValue("Allocated", m.formatSize(node.Stats.SizeAlloc)),
+		m.renderKeyValue("Apparent", m.formatSize(node.Stats.SizeApp)),
+	}
+
+	if node.IsDir() {
+		lines = append(lines,
+			m.renderKeyValue("Files", m.formatCount(node.Stats.FileCount)),
+			m.renderKeyValue("Dirs", m.formatCount(node.Stats.DirCount)),
+			m.renderKeyValue("Recursive", m.formatSize(node.Stats.TotalAlloc)),
 		)
 	}
-
 	if !node.Meta.MTime.IsZero() {
-		details = append(details,
-			"",
-			"Modified:  "+node.Meta.MTime.Format("2006-01-02"),
-		)
+		lines = append(lines, m.renderKeyValue("Modified", node.Meta.MTime.Format("2006-01-02 15:04")))
 	}
-
 	if node.Category.Cat != model.CatUnknown {
-		details = append(details,
-			"",
-			"Category:  "+node.Category.Cat.String(),
-		)
+		lines = append(lines, m.renderKeyValue("Category", node.Category.Cat.String()))
+	}
+	lines = append(lines, "", m.theme.PanelTitle.Render("Largest children"))
+	lines = append(lines, m.renderLargestChildren(node, panelWidth)...)
+	return lipgloss.JoinVertical(lipgloss.Left, lines...)
+}
+
+func (m Model) renderLargestChildren(node *model.Node, panelWidth int) []string {
+	if len(node.Stats.LargestChildIDs) == 0 {
+		return []string{m.theme.Subtitle.Render("No child breakdown available.")}
 	}
 
-	return m.theme.Panel.Width(36).Render(
-		lipgloss.JoinVertical(lipgloss.Left, details...),
-	)
+	lines := make([]string, 0, len(node.Stats.LargestChildIDs))
+	total := node.Size(m.sizeMode)
+	for _, childID := range node.Stats.LargestChildIDs {
+		child := m.scan.GetNode(childID)
+		if child == nil {
+			continue
+		}
+		pct := 0.0
+		if total > 0 {
+			pct = float64(child.Size(m.sizeMode)) / float64(total) * 100
+		}
+		name := truncate(child.Name, maxInt(12, panelWidth-24))
+		line := fmt.Sprintf("%-18s %s %s", name, renderMeter(pct, 6, m.nodeColor(child), m.theme.Subtle), m.formatSize(child.Size(m.sizeMode)))
+		lines = append(lines, lipgloss.NewStyle().Foreground(m.nodeColor(child)).Render(line))
+	}
+	if len(lines) == 0 {
+		return []string{m.theme.Subtitle.Render("No child breakdown available.")}
+	}
+	return lines
 }
 
 func (m Model) renderOverviewView() string {
-	header := lipgloss.JoinVertical(lipgloss.Left,
-		m.theme.Title.Render("📊 Disk Usage Overview"),
-		m.theme.Subtitle.Render(m.scan.RootPath),
+	summary := m.renderPanel(
+		"Storage snapshot",
+		"Filesystem occupancy and scan share",
+		m.renderOverviewSummaryContent(),
+		maxInt(40, m.width/3),
+	)
+	categories := m.renderPanel(
+		"Category breakdown",
+		"Sorted by size in the current mode",
+		m.renderOverviewCategories(),
+		maxInt(40, m.width/3),
+	)
+	hotspots := m.renderPanel(
+		"Hot paths",
+		"Largest immediate children in the scanned root",
+		m.renderOverviewHotspots(),
+		maxInt(40, m.width/3),
+	)
+	offenders := m.renderPanel(
+		"Largest objects",
+		"Fast triage for where the footprint concentrates",
+		m.renderOverviewOffenders(),
+		m.width,
 	)
 
-	// Disk usage bar
-	usageBar := m.renderUsageBar()
+	if m.width < 130 {
+		return lipgloss.JoinVertical(lipgloss.Left, summary, "", categories, "", hotspots, "", offenders)
+	}
 
-	// Pie chart with labels - shows top directories
-	pieChart := m.renderPieChartWithLabels()
-
-	help := m.theme.Help.Render("↑↓ navigate • t tree • Esc back • q quit")
-
-	return lipgloss.JoinVertical(lipgloss.Left,
-		header,
-		"",
-		usageBar,
-		"",
-		pieChart,
-		"",
-		help,
-	)
+	top := lipgloss.JoinHorizontal(lipgloss.Top, summary, "  ", categories, "  ", hotspots)
+	return lipgloss.JoinVertical(lipgloss.Left, top, "", offenders)
 }
 
-func (m Model) renderPieChartWithLabels() string {
-	// Get top 10 directories + Others
-	slices := m.getTopDirectorySlices(10)
-	if len(slices) == 0 {
-		return "No data to display"
+func (m Model) renderOverviewSummaryContent() string {
+	root := m.scan.Root()
+	rootSize := int64(0)
+	if root != nil {
+		rootSize = root.Size(m.sizeMode)
 	}
 
-	// Color palette for pie slices
-	colors := []lipgloss.Color{
-		"#4285F4", // Blue
-		"#EA4335", // Red
-		"#FBBC05", // Yellow
-		"#34A853", // Green
-		"#FF6D01", // Orange
-		"#46BDC6", // Cyan
-		"#7B1FA2", // Purple
-		"#C2185B", // Pink
-		"#00ACC1", // Teal
-		"#8D6E63", // Brown
-		"#757575", // Gray (Others)
+	capacityPct := 0.0
+	if m.overview.TotalBytes > 0 {
+		capacityPct = float64(m.overview.UsedBytes) / float64(m.overview.TotalBytes) * 100
+	}
+	sharePct := 0.0
+	if m.overview.TotalBytes > 0 {
+		sharePct = float64(rootSize) / float64(m.overview.TotalBytes) * 100
 	}
 
-	// Assign colors
-	for i := range slices {
-		if i < len(colors) {
-			slices[i].Color = colors[i]
-		} else {
-			slices[i].Color = colors[len(colors)-1]
+	lines := []string{
+		m.renderKeyValue("Mounted at", truncatePath(m.scan.FS.MountPoint, 28)),
+		m.renderKeyValue("Filesystem", m.scan.FS.FSType),
+		m.renderKeyValue("Used", fmt.Sprintf("%s / %s", m.formatSize(m.overview.UsedBytes), m.formatSize(m.overview.TotalBytes))),
+		renderMeterLine("Capacity", capacityPct, 16, m.theme.Highlight, m.theme.Subtle),
+		m.renderKeyValue("Scanned path", m.formatSize(rootSize)),
+		renderMeterLine("Scan share", sharePct, 16, m.theme.Success, m.theme.Subtle),
+		m.renderKeyValue("Free", m.formatSize(m.overview.FreeBytes)),
+	}
+	return lipgloss.JoinVertical(lipgloss.Left, lines...)
+}
+
+func (m Model) renderOverviewCategories() string {
+	if len(m.overview.Categories) == 0 {
+		return m.theme.Subtitle.Render("No category data available.")
+	}
+
+	lines := make([]string, 0, len(m.overview.Categories))
+	for i, cat := range m.overview.Categories {
+		bytes := cat.Bytes(m.sizeMode)
+		pct := 0.0
+		if m.overview.UsedBytes > 0 {
+			pct = float64(bytes) / float64(m.overview.UsedBytes) * 100
 		}
+		color := m.theme.CategoryColor(int(cat.Category))
+		prefix := " "
+		if i == m.overviewCursor && m.currentView == ViewOverview {
+			prefix = ">"
+		}
+		line := fmt.Sprintf("%s %-12s %s %s",
+			prefix,
+			truncate(cat.Category.String(), 12),
+			renderMeter(pct, 10, color, m.theme.Subtle),
+			m.formatSize(bytes),
+		)
+		style := lipgloss.NewStyle().Foreground(color)
+		if i == m.overviewCursor && m.currentView == ViewOverview {
+			style = m.theme.Selected
+		}
+		lines = append(lines, style.Render(line))
+		lines = append(lines, lipgloss.NewStyle().Foreground(m.theme.Subtle).Render(
+			fmt.Sprintf("  %s / %s files / %s dirs", m.formatPercent(pct), m.formatCount(cat.FileCount), m.formatCount(cat.DirCount)),
+		))
 	}
-
-	// Create Enhanced Pie Chart
-	chartStr := widgets.EnhancedPieChartWithLegend(slices, 60, 20)
-
-	return chartStr
+	return lipgloss.JoinVertical(lipgloss.Left, lines...)
 }
 
-func (m Model) getTopDirectorySlices(maxSlices int) []widgets.PieSlice {
+func (m Model) renderOverviewHotspots() string {
+	children := m.topRootChildren(8)
+	if len(children) == 0 {
+		return m.theme.Subtitle.Render("No child paths available.")
+	}
+
+	root := m.scan.Root()
+	rootSize := int64(0)
+	if root != nil {
+		rootSize = root.Size(m.sizeMode)
+	}
+
+	lines := make([]string, 0, len(children))
+	for _, child := range children {
+		pct := 0.0
+		if rootSize > 0 {
+			pct = float64(child.Size(m.sizeMode)) / float64(rootSize) * 100
+		}
+		line := fmt.Sprintf("%-16s %s %s",
+			truncate(child.Name, 16),
+			renderMeter(pct, 8, m.nodeColor(child), m.theme.Subtle),
+			m.formatSize(child.Size(m.sizeMode)),
+		)
+		lines = append(lines, lipgloss.NewStyle().Foreground(m.nodeColor(child)).Render(line))
+		lines = append(lines, lipgloss.NewStyle().Foreground(m.theme.Subtle).Render(
+			fmt.Sprintf("  %s / %s", m.formatPercent(pct), truncatePath(child.Path, 24)),
+		))
+	}
+	return lipgloss.JoinVertical(lipgloss.Left, lines...)
+}
+
+func (m Model) renderOverviewOffenders() string {
+	root := m.scan.Root()
+	rootSize := int64(0)
+	if root != nil {
+		rootSize = root.Size(m.sizeMode)
+	}
+
+	var nodes []*model.Node
+	for _, node := range m.scan.Nodes {
+		if node == nil || node.ID == m.scan.RootID {
+			continue
+		}
+		nodes = append(nodes, node)
+	}
+	sort.Slice(nodes, func(i, j int) bool { return nodes[i].Size(m.sizeMode) > nodes[j].Size(m.sizeMode) })
+	if len(nodes) > 8 {
+		nodes = nodes[:8]
+	}
+	if len(nodes) == 0 {
+		return m.theme.Subtitle.Render("No offenders available.")
+	}
+
+	lines := make([]string, 0, len(nodes))
+	for _, node := range nodes {
+		pct := 0.0
+		if rootSize > 0 {
+			pct = float64(node.Size(m.sizeMode)) / float64(rootSize) * 100
+		}
+		line := fmt.Sprintf("%-34s %-8s %s %s",
+			truncate(node.Path, 34),
+			node.Kind.String(),
+			m.formatSize(node.Size(m.sizeMode)),
+			m.formatPercent(pct),
+		)
+		lines = append(lines, lipgloss.NewStyle().Foreground(m.nodeColor(node)).Render(line))
+	}
+	if m.overview.BiggestFile != "" {
+		lines = append(lines, "")
+		lines = append(lines, m.theme.Subtitle.Render("Largest file: "+truncatePath(m.overview.BiggestFile, 54)))
+	}
+	if m.overview.BiggestDir != "" {
+		lines = append(lines, m.theme.Subtitle.Render("Largest dir:  "+truncatePath(m.overview.BiggestDir, 54)))
+	}
+	return lipgloss.JoinVertical(lipgloss.Left, lines...)
+}
+
+func (m Model) renderHelpOverlay(content string) string {
+	help := strings.Join([]string{
+		"Keyboard Shortcuts",
+		"",
+		"Navigation",
+		"  j/k, up/down    Move the cursor",
+		"  enter, l        Expand or collapse directories",
+		"  h, left         Collapse or jump to parent",
+		"  g / G           Jump to top or bottom",
+		"  tab             Switch between Explorer and Overview",
+		"  t / o           Open Explorer or Overview directly",
+		"",
+		"Actions",
+		"  x               Mark or unmark the selected node",
+		"  y               Copy path to clipboard",
+		"  D               Delete selected node (with confirmation)",
+		"  e               Reveal in file manager",
+		"  ctrl+o          Open browser GUI",
+		"  /               Search / filter tree",
+		"  s               Cycle sort order (size/name/mtime/count)",
+		"  a               Toggle allocated vs apparent size",
+		"  esc             Back to Explorer / close help / clear search",
+		"",
+		"General",
+		"  ?               Toggle help",
+		"  q               Quit",
+	}, "\n")
+
+	helpBox := lipgloss.NewStyle().
+		Width(56).
+		Padding(1, 2).
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(m.theme.Highlight).
+		Render(help)
+
+	return lipgloss.Place(
+		m.width,
+		m.height,
+		lipgloss.Center,
+		lipgloss.Center,
+		helpBox,
+		lipgloss.WithWhitespaceChars(" "),
+		lipgloss.WithWhitespaceForeground(m.theme.Background),
+	)
+}
+
+func (m Model) selectedNode() *model.Node {
+	if m.treeCursor < 0 || m.treeCursor >= len(m.treeFlat) {
+		return nil
+	}
+	return m.treeFlat[m.treeCursor]
+}
+
+func (m Model) topRootChildren(limit int) []*model.Node {
 	root := m.scan.Root()
 	if root == nil {
 		return nil
 	}
 
-	// Collect all immediate children of root
-	type dirSize struct {
-		name string
-		size int64
-	}
-
-	var dirs []dirSize
+	children := make([]*model.Node, 0, len(root.Children))
 	for _, childID := range root.Children {
-		child := m.scan.GetNode(childID)
-		if child != nil {
-			size := child.Stats.TotalAlloc
-			if child.Kind != model.KindDir {
-				size = child.Stats.SizeAlloc
-			}
-			dirs = append(dirs, dirSize{name: child.Name, size: size})
+		if child := m.scan.GetNode(childID); child != nil {
+			children = append(children, child)
 		}
 	}
-
-	// Sort by size descending
-	for i := 0; i < len(dirs)-1; i++ {
-		for j := i + 1; j < len(dirs); j++ {
-			if dirs[j].size > dirs[i].size {
-				dirs[i], dirs[j] = dirs[j], dirs[i]
-			}
-		}
+	sort.Slice(children, func(i, j int) bool {
+		return children[i].Size(m.sizeMode) > children[j].Size(m.sizeMode)
+	})
+	if len(children) > limit {
+		children = children[:limit]
 	}
-
-	// Calculate total
-	var total int64
-	for _, d := range dirs {
-		total += d.size
-	}
-	if total == 0 {
-		return nil
-	}
-
-	// Take top N and group rest as Others
-	var slices []widgets.PieSlice
-	var othersSize int64
-	othersCount := 0
-
-	for i, d := range dirs {
-		if i < maxSlices-1 || len(dirs) <= maxSlices {
-			slices = append(slices, widgets.PieSlice{
-				Label: d.name,
-				Value: float64(d.size),
-			})
-		} else {
-			othersSize += d.size
-			othersCount++
-		}
-	}
-
-	// Add Others if needed
-	if othersCount > 0 {
-		slices = append(slices, widgets.PieSlice{
-			Label: "Others (" + formatInt(int64(othersCount)) + " items)",
-			Value: float64(othersSize),
-		})
-	}
-
-	return slices
+	return children
 }
 
-// Helper math functions
-func sqrt(x float64) float64 {
-	if x <= 0 {
-		return 0
+func (m Model) nodeColor(node *model.Node) lipgloss.Color {
+	if node == nil {
+		return m.theme.Foreground
 	}
-	z := x / 2
-	for i := 0; i < 10; i++ {
-		z = (z + x/z) / 2
+	if node.Category.Cat != model.CatUnknown {
+		return m.theme.CategoryColor(int(node.Category.Cat))
 	}
-	return z
+	if node.IsDir() {
+		return m.theme.Highlight
+	}
+	return m.theme.Foreground
 }
 
-func atan2(y, x float64) float64 {
-	// Approximate atan2 using coordinate-based approach
-	if x == 0 {
-		if y > 0 {
-			return 3.14159 / 2
-		} else if y < 0 {
-			return -3.14159 / 2
-		}
-		return 0
-	}
-
-	// Simple atan approximation for |t| <= 1
-	atanApprox := func(t float64) float64 {
-		absT := t
-		if absT < 0 {
-			absT = -absT
-		}
-
-		// For |t| > 1, use atan(t) = π/2 - atan(1/t)
-		if absT > 1 {
-			sign := 1.0
-			if t < 0 {
-				sign = -1.0
-			}
-			t2 := 1 / absT
-			t4 := t2 * t2
-			return sign * (3.14159/2 - t2*(1-t4*(1.0/3-t4*(1.0/5-t4/7))))
-		}
-
-		// Taylor series for |t| <= 1
-		t2 := t * t
-		return t * (1 - t2*(1.0/3-t2*(1.0/5-t2*(1.0/7-t2/9))))
-	}
-
-	result := atanApprox(y / x)
-	if x < 0 {
-		if y >= 0 {
-			result += 3.14159
-		} else {
-			result -= 3.14159
-		}
-	}
-	return result
+func (m Model) renderKeyValue(label, value string) string {
+	return lipgloss.NewStyle().Foreground(m.theme.Subtle).Render(label+": ") +
+		lipgloss.NewStyle().Foreground(m.theme.Foreground).Render(value)
 }
 
-func angleInSegment(angle, start, end float64) bool {
-	// Normalize all angles to [-π, π]
-	normalize := func(a float64) float64 {
-		for a > 3.14159 {
-			a -= 2 * 3.14159
-		}
-		for a < -3.14159 {
-			a += 2 * 3.14159
-		}
+func renderMeterLine(label string, pct float64, width int, fill, empty lipgloss.Color) string {
+	left := lipgloss.NewStyle().Foreground(empty).Render(label)
+	right := lipgloss.NewStyle().Foreground(empty).Render(fmt.Sprintf("%5.1f%%", pct))
+	return fmt.Sprintf("%-10s %s %s", left, renderMeter(pct, width, fill, empty), right)
+}
+
+func renderMeter(pct float64, width int, fill, empty lipgloss.Color) string {
+	if width <= 0 {
+		return ""
+	}
+	filled := int((pct / 100) * float64(width))
+	if filled < 0 {
+		filled = 0
+	}
+	if filled > width {
+		filled = width
+	}
+	return lipgloss.NewStyle().Foreground(fill).Render(strings.Repeat("█", filled)) +
+		lipgloss.NewStyle().Foreground(empty).Render(strings.Repeat("░", width-filled))
+}
+
+func minInt(a, b int) int {
+	if a < b {
 		return a
 	}
-
-	angle = normalize(angle)
-	start = normalize(start)
-	end = normalize(end)
-
-	if start <= end {
-		return angle >= start && angle < end
-	}
-	// Segment wraps around
-	return angle >= start || angle < end
+	return b
 }
 
-func (m Model) renderUsageBar() string {
-	if m.overview.TotalBytes == 0 {
-		return ""
+func maxInt(a, b int) int {
+	if a > b {
+		return a
 	}
-
-	usedPct := float64(m.overview.UsedBytes) / float64(m.overview.TotalBytes)
-	barWidth := m.width - 20
-	if barWidth < 20 {
-		barWidth = 20
-	}
-
-	filledWidth := int(float64(barWidth) * usedPct)
-	if filledWidth > barWidth {
-		filledWidth = barWidth
-	}
-
-	filled := lipgloss.NewStyle().Background(m.theme.Highlight).Render(
-		repeatStr(" ", filledWidth),
-	)
-	empty := lipgloss.NewStyle().Background(m.theme.Subtle).Render(
-		repeatStr(" ", barWidth-filledWidth),
-	)
-
-	bar := filled + empty
-
-	label := m.formatSize(m.overview.UsedBytes) + " / " +
-		m.formatSize(m.overview.TotalBytes) + " (" +
-		m.formatPercent(usedPct*100) + ")"
-
-	return lipgloss.JoinVertical(lipgloss.Left,
-		m.theme.PanelTitle.Render("💾 Disk Usage"),
-		bar,
-		m.theme.Subtitle.Render(label),
-	)
-}
-
-func (m Model) renderCategories() string {
-	title := m.theme.PanelTitle.Render("📦 By Category")
-
-	if len(m.overview.Categories) == 0 {
-		return title + "\n  No data"
-	}
-
-	var lines []string
-	for i, cat := range m.overview.Categories {
-		if cat.BytesAlloc == 0 {
-			continue
-		}
-
-		pct := float64(cat.BytesAlloc) / float64(m.overview.UsedBytes) * 100
-		color := m.theme.CategoryColor(int(cat.Category))
-
-		indicator := lipgloss.NewStyle().Foreground(color).Render("█")
-		name := cat.Category.String()
-		size := m.formatSize(cat.BytesAlloc)
-		pctStr := m.formatPercent(pct)
-
-		line := "  " + indicator + " " + name
-		// Pad
-		for len(line) < 25 {
-			line += " "
-		}
-		line += size + "  " + pctStr
-
-		if i == m.overviewCursor && m.currentView == ViewOverview {
-			line = m.theme.Selected.Render(line)
-		}
-
-		lines = append(lines, line)
-	}
-
-	return lipgloss.JoinVertical(lipgloss.Left,
-		append([]string{title, ""}, lines...)...,
-	)
-}
-
-func (m Model) renderTopOffenders() string {
-	title := m.theme.PanelTitle.Render("🔥 Top Offenders")
-
-	var lines []string
-
-	if m.overview.BiggestDir != "" {
-		lines = append(lines, "  📁 Biggest dir:  "+truncatePath(m.overview.BiggestDir, 40)+
-			" ("+m.formatSize(m.overview.BiggestDirSize)+")")
-	}
-
-	if m.overview.BiggestFile != "" {
-		lines = append(lines, "  📄 Biggest file: "+truncatePath(m.overview.BiggestFile, 40)+
-			" ("+m.formatSize(m.overview.BiggestFileSize)+")")
-	}
-
-	if len(lines) == 0 {
-		return ""
-	}
-
-	return lipgloss.JoinVertical(lipgloss.Left,
-		append([]string{title, ""}, lines...)...,
-	)
-}
-
-func (m Model) renderHelpOverlay(content string) string {
-	help := `
-Keyboard Shortcuts
-
-Navigation
-  j/k, ↑/↓     Move up/down
-  Enter, l     Expand/collapse directory
-  h, ←         Collapse or go to parent
-  g            Go to top
-  G            Go to bottom
-
-Actions
-  x            Mark/unmark item
-  a            Toggle allocated/apparent size
-  O            Switch to Overview
-  Esc          Back / close
-
-General
-  ?            Toggle this help
-  q            Quit
-`
-
-	helpBox := m.theme.Panel.
-		Width(50).
-		Render(help)
-
-	// Center the help box
-	x := (m.width - 50) / 2
-	y := (m.height - 20) / 2
-	if x < 0 {
-		x = 0
-	}
-	if y < 0 {
-		y = 0
-	}
-
-	return lipgloss.Place(m.width, m.height,
-		lipgloss.Center, lipgloss.Center,
-		helpBox,
-		lipgloss.WithWhitespaceChars(" "),
-		lipgloss.WithWhitespaceForeground(m.theme.Background),
-	)
+	return b
 }
 
 // Helper functions
@@ -951,6 +1229,17 @@ func repeatStr(s string, n int) string {
 		result += s
 	}
 	return result
+}
+
+func truncate(s string, max int) string {
+	r := []rune(s)
+	if len(r) <= max {
+		return s
+	}
+	if max <= 1 {
+		return string(r[:1])
+	}
+	return string(r[:max-1]) + "…"
 }
 
 func truncatePath(path string, maxLen int) string {

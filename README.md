@@ -93,6 +93,60 @@ cliverse disk junk . --profile dev
 cliverse sysmon
 ```
 
+## Icon Rendering and Nerd Fonts
+
+> [!CAUTION]
+> **Important:** CLIverse uses safe terminal icons by default so the TUI works on every machine. Nerd Font icons are optional. If you enable Nerd icons without using a Nerd Font in your terminal profile, icons will render as empty boxes or `?` symbols.
+
+### Default fallback mode
+
+Use the default mode for maximum compatibility:
+
+```bash
+cliverse
+```
+
+This uses terminal-safe symbols that work without extra font setup.
+
+### Enable Nerd Font icons
+
+After configuring your terminal to use a Nerd Font, run:
+
+```bash
+CLIVERSE_ICONS=nerd cliverse
+```
+
+For local development:
+
+```bash
+CLIVERSE_ICONS=nerd go run .
+```
+
+### Test whether your terminal is ready
+
+Run this in the same terminal window where you launch CLIverse:
+
+```bash
+printf '\uf120 \uf007 \uf07b \uf017 \uf2db \uf0ad\n'
+```
+
+If you see boxes, your terminal is not using a Nerd Font yet. If you see icons, Nerd mode is ready.
+
+### Create a macOS Terminal profile for CLIverse
+
+Use a separate profile if you do not want Nerd Font to change your normal terminal appearance.
+
+1. Open macOS Terminal.
+2. Press `Cmd + ,` to open Settings.
+3. Go to `Profiles`.
+4. Click `+` and create a new profile named `CLIverse`.
+5. Open the `Text` tab for that profile.
+6. Click `Change...` next to Font.
+7. Select `JetBrainsMono Nerd Font Mono` or another Nerd Font.
+8. Set the profile as default only if you want all new Terminal windows to use it.
+9. Open a new Terminal window with the `CLIverse` profile.
+10. Run `CLIVERSE_ICONS=nerd cliverse`.
+
 ## Command Map
 
 ```mermaid

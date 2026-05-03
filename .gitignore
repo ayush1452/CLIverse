@@ -2,6 +2,7 @@
 
 # Local tool settings
 .claude/
+CLAUDE.md
 
 # Build outputs
 cliverse
