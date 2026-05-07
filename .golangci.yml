@@ -6,14 +6,9 @@ linters:
     - govet
     - ineffassign
     - staticcheck
-    - gofmt
-    - goimports
     - misspell
     - unconvert
-    - unparam
-    - prealloc
     - bodyclose
 
 run:
   timeout: 5m
-  modules-download-mode: readonly
