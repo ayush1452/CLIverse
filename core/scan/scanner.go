@@ -10,7 +10,6 @@ import (
 	"runtime"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"time"
 
 	"github.com/ayush1452/CLIverse/core/model"
@@ -63,9 +62,7 @@ func (s *Scanner) Scan(ctx context.Context, rootPath string, progressFn Progress
 	}
 
 	// Get root device for mount boundary detection
-	if stat, ok := rootInfo.Sys().(*syscall.Stat_t); ok {
-		s.rootDev = uint64(stat.Dev)
-	}
+	s.rootDev = rootDevice(rootInfo)
 
 	scan := model.NewScan(absRoot, s.opts)
 	scan.StartedAt = time.Now()
@@ -184,32 +181,7 @@ func (s *Scanner) createNode(parent *model.Node, path string, info fs.FileInfo, 
 	}
 
 	// Get system-specific info
-	if stat, ok := info.Sys().(*syscall.Stat_t); ok {
-		node.Meta.UID = stat.Uid
-		node.Meta.GID = stat.Gid
-		node.Meta.Ident = model.FileIdentity{
-			Dev:   uint64(stat.Dev),
-			Inode: stat.Ino,
-		}
-
-		// Calculate sizes
-		node.Stats.SizeApp = info.Size()
-		node.Stats.SizeAlloc = stat.Blocks * 512
-
-		// Check for hardlinks
-		if stat.Nlink > 1 && node.Kind == model.KindFile {
-			if _, seen := s.seenInodes.LoadOrStore(node.Meta.Ident, id); seen {
-				node.Flags.IsHardlink = true
-				// Don't count size again for hardlinks
-				node.Stats.SizeAlloc = 0
-				node.Stats.SizeApp = 0
-			}
-		}
-	} else {
-		// Fallback for non-Unix systems
-		node.Stats.SizeApp = info.Size()
-		node.Stats.SizeAlloc = info.Size()
-	}
+	fillNodeMeta(node, info, &s.seenInodes, id)
 
 	// Update stats
 	s.mu.Lock()
@@ -309,10 +281,7 @@ func (s *Scanner) getNodeKind(info fs.FileInfo) model.NodeKind {
 }
 
 func (s *Scanner) isSameDevice(info fs.FileInfo) bool {
-	if stat, ok := info.Sys().(*syscall.Stat_t); ok {
-		return uint64(stat.Dev) == s.rootDev
-	}
-	return true // Assume same device if we can't check
+	return sameDevice(info, s.rootDev)
 }
 
 func (s *Scanner) shouldExclude(path, name string) bool {
@@ -339,15 +308,5 @@ func (s *Scanner) addError(path, op string, err error) {
 }
 
 func (s *Scanner) getFilesystemInfo(path string) model.FSInfo {
-	var stat syscall.Statfs_t
-	if err := syscall.Statfs(path, &stat); err != nil {
-		return model.FSInfo{}
-	}
-
-	blockSize := uint64(stat.Bsize)
-	return model.FSInfo{
-		MountPoint: path,
-		TotalBytes: int64(stat.Blocks * blockSize),
-		FreeBytes:  int64(stat.Bavail * blockSize),
-	}
+	return filesystemInfo(path)
 }

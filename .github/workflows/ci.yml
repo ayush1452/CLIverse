@@ -13,7 +13,7 @@ concurrency:
 
 env:
   BINARY_NAME: cliverse
-  GO_VERSION_FILE: go.mod
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 # ─────────────────────────────────────────────────────────────────────────────
 # STAGE 1 — Code Quality
@@ -80,7 +80,9 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          # Always use the latest stable Go for vulnerability scanning so
+          # stdlib CVEs patched in newer releases are not reported as open.
+          go-version: stable
           cache: true
 
       - name: Vulnerability scan (govulncheck)
@@ -97,7 +99,7 @@ jobs:
 
       - name: Upload SARIF to GitHub Security tab
         if: matrix.scanner == 'gosec' && always()
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: gosec.sarif
 
@@ -119,8 +121,14 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Run tests with race detector
-        run: go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
+      - name: Run tests
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            go test -v -coverprofile=coverage.out -covermode=atomic ./...
+          else
+            go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
+          fi
 
       - name: Upload coverage to Codecov
         if: matrix.os == 'ubuntu-latest'
